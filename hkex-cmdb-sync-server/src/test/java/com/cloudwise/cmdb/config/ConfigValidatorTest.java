@@ -107,7 +107,7 @@ class ConfigValidatorTest {
     }
 
     @Test
-    @DisplayName("douc.user-id 缺失时启动失败（填错会导致用户列表为空，匹配率静默归零）")
+    @DisplayName("douc.user-id 被显式置空时启动失败（默认值是 1，正常不会走到这里）")
     void validateMissingUserIdThrows() {
         douc.setUserId(null);
 

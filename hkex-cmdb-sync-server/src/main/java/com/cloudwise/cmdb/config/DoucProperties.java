@@ -64,14 +64,16 @@ public class DoucProperties {
     private String topAccountId = "110";
 
     /**
-     * 操作人用户 ID，对应请求头 {@code userId}。
+     * 操作人用户 ID，对应请求头 {@code userId}，默认 {@code 1}。
      *
-     * <p><b>刻意不给默认值。</b>该值不只是"记操作日志"——{@code /user/list} 会按调用人的
-     * 可见范围过滤，实测 {@code userId=1} 能看到全部用户，而 {@code userId=3} 返回 0 条，
-     * 表现为匹配率静默归零，很难从现象反推到配置。留空则被
-     * {@link ConfigValidator} 拦在启动阶段。</p>
+     * <p>该值不只是"记操作日志"——{@code /user/list} 会<b>按调用人的可见范围过滤</b>。
+     * 实测（2026-09-16，hkexdev）：{@code userId=1} 能看到全部用户，
+     * {@code userId=3} 返回 0 条。填错的表现是匹配率静默归零，很难从现象反推到配置。</p>
+     *
+     * <p><b>换到生产环境时必须复核这一个值</b>：它是否同样有全局可见权限要以生产实测为准，
+     * 可以用 {@code POST /sync/groups/match-check}（只读）跑一次确认。</p>
      */
-    private String userId;
+    private String userId = "1";
 
     /** 操作人显示名，对应请求头 {@code userName}。 */
     private String userName = "cmdb-sync";

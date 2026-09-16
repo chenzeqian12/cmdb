@@ -35,7 +35,9 @@ douc.app-secret=<APIM 应用 appSecret>
 
 douc.account-id=<生产租户号>
 douc.top-account-id=<生产租户号>
-douc.user-id=<有全局可见权限的账号 ID>
+# 默认 1（dev 上 1 能看到全部用户）。生产这个值必须实测复核 —— 它决定 /user/list
+# 的可见范围，填错的表现是匹配率静默归零。用 /sync/groups/match-check（只读）验证。
+douc.user-id=1
 
 # ⚠️ 首次上线保持 true，先用 /sync/groups?dryRun=true 跑一遍看计划，
 #    确认「待删」数量符合预期后再改成 false

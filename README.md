@@ -215,10 +215,14 @@ Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进�
 | `douc.base-url` | `http://10.106.3.75:18241` | 生产 DOUC 地址 |
 | `douc.auth-mode` | `direct`（无认证直连） | `apim`（走网关正式鉴权） |
 | `douc.account-id` / `top-account-id` | `110` | 生产租户号 |
-| `douc.user-id` | `1` | 必须有全局用户可见权限 |
+| `douc.user-id` | `1`（代码默认值） | **必须实测复核**，见下 |
 | `douc.dry-run` | `true` | 确认计划无误后再改 `false` |
 
 生产那份照 `conf/application-prod.properties.example` 复制填写，里面已把要确认的四件事列在文件头。
+
+> **`douc.user-id` 默认是 `1`** —— 实测 dev 上 `1` 能看到全部用户，`3` 返回 0 条。
+> 它决定 `/user/list` 的可见范围，**填错不会报错**，只会让匹配率静默归零。
+> 生产上线前务必用 `POST /sync/groups/match-check`（只读）跑一次确认这个值在生产同样有全局可见权限。
 
 ### 接口
 

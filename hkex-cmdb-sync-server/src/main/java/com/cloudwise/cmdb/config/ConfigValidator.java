@@ -74,12 +74,16 @@ public class ConfigValidator {
             throw new IllegalStateException("缺少必需配置：" + missing);
         }
 
-        log.info("{}启动自检通过。DOUC={}{}，认证方式={}，dryRun={}，"
+        // userId 单独打出来：它决定 /user/list 的可见范围，填错不报错只会让匹配率归零，
+        // 出问题时第一个要核对的就是这个值。
+        log.info("{}启动自检通过。DOUC={}{}，认证方式={}，accountId={}，userId={}，dryRun={}，"
                         + "ServiceNow={}",
                 TAG,
                 douc.getBaseUrl(),
                 douc.getGatewayPrefix(),
                 authMode,
+                douc.getAccountId(),
+                douc.getUserId(),
                 douc.isDryRun(),
                 serviceNow.getBaseUrl());
         if (douc.isDryRun()) {
