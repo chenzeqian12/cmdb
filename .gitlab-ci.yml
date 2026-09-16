@@ -1,0 +1,15 @@
+include:
+  - project: 'docp/architecture'
+    ref: 'master'
+    file: 'cicd/.gitlab-ci-template-for-maven.yml'
+
+variables:
+  TOOLS_SETTING_JDK: "jdk17"
+
+# 制品构建。多模块工程需要指明产出可执行包的那个模块，与 docc 的写法一致。
+build-job:
+  extends: .build_template
+  parallel:
+    matrix:
+      - PROJECT_LIST:
+          - hkex-cmdb-sync-server

@@ -1,0 +1,54 @@
+# ===========================================================================
+# 生产环境配置模板。
+#
+# 复制为同目录下的 application-prod.properties 后填入真实值。
+# 该文件已在 .gitignore 中排除，不会入库。
+#
+# 用法：./bin/hkexCmdbSync start        （启动脚本默认 SPRING_PROFILE=prod）
+#
+# 上线前必须先确认的四件事（见 README「上线前仍需确认」）：
+#   1. douc.account-id / top-account-id —— 生产租户号，dev 是 110。填错会写到别人租户下
+#   2. douc.user-id —— 必须有全局用户可见权限，否则 /user/list 返回空、匹配率静默归零
+#   3. 生产 SN 用户导入时用的关联字段 —— 决定匹配口径是否要调整
+#   4. 生产是否允许直连 DOUC 服务端口，还是必须走网关（后者用 apim 模式）
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# ServiceNow（生产）
+# ---------------------------------------------------------------------------
+servicenow.base-url=<生产 ServiceNow 地址>
+servicenow.client-id=<client_id>
+servicenow.client-secret=<client_secret>
+servicenow.username=<username>
+servicenow.password=<password>
+
+# ---------------------------------------------------------------------------
+# DOUC（生产）
+# ---------------------------------------------------------------------------
+douc.base-url=<生产 DOUC 地址>
+douc.gateway-prefix=/docp/gateway/douc
+
+# apim —— 走网关的正式应用鉴权（推荐）；direct —— 仅内网且允许直连时使用
+douc.auth-mode=apim
+douc.app-key=<APIM 应用 appKey>
+douc.app-secret=<APIM 应用 appSecret>
+
+douc.account-id=<生产租户号>
+douc.top-account-id=<生产租户号>
+douc.user-id=<有全局可见权限的账号 ID>
+
+# ⚠️ 首次上线保持 true，先用 /sync/groups?dryRun=true 跑一遍看计划，
+#    确认「待删」数量符合预期后再改成 false
+douc.dry-run=true
+
+# ---------------------------------------------------------------------------
+# XXL-Job 调度中心
+# ---------------------------------------------------------------------------
+xxl.job.admin.address=<XXL-Job 管理端地址>
+xxl.job.accessToken=<accessToken>
+
+# ---------------------------------------------------------------------------
+# 若生产走 cookie 会话（不推荐，仅临时联调）
+# ---------------------------------------------------------------------------
+#douc.auth-mode=cookie
+#douc.cookie=<CASTGC=...; aops-key=...; aops-cpk=...; DOUC_SESSION=...>

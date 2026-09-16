@@ -1,0 +1,41 @@
+# ===========================================================================
+# hkexdev 现场测试环境配置模板。
+#
+# 复制为同目录下的 application-dev.properties 后填入真实值（该文件已 gitignore）。
+#
+# 用法：SPRING_PROFILE=dev ./bin/hkexCmdbSync start
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# ServiceNow
+# ---------------------------------------------------------------------------
+servicenow.base-url=https://hkexgroupuat.service-now.com
+servicenow.client-id=<client_id>
+servicenow.client-secret=<client_secret>
+servicenow.username=<username>
+servicenow.password=<password>
+
+# ---------------------------------------------------------------------------
+# DOUC：推荐直连服务端口（内网部署）
+#
+# hkexdev.cloudwise.com 走 tengine 时网关强制校验 SSO 会话；
+# 直连服务端口则不需要认证，指向的是同一套 DOUC，只是入口不同。
+# ---------------------------------------------------------------------------
+douc.base-url=http://10.106.3.75:18241
+douc.gateway-prefix=/douc
+douc.auth-mode=direct
+
+# userId 决定 /user/list 的可见范围，必须用能看到全部用户的账号，
+# 否则用户列表为空、匹配率静默归零（dev 上 1 可见全部，3 返回 0 条）
+douc.user-id=1
+douc.account-id=110
+douc.top-account-id=110
+
+# 试运行：true 只算差异不写数据
+douc.dry-run=true
+
+# ---------------------------------------------------------------------------
+# XXL-Job（现场测试一般不接调度中心，留空服务照常启动）
+# ---------------------------------------------------------------------------
+xxl.job.admin.address=${XXL_JOB_ADMIN_ADDRESS:}
+xxl.job.accessToken=${XXL_JOB_ACCESS_TOKEN:}

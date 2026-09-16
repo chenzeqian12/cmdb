@@ -1,0 +1,18 @@
+target/
+logs/
+pid/
+!.mvn/wrapper/maven-wrapper.jar
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# 真实凭据文件，绝不入库。
+# 注意用 **/ 前缀：带斜杠的模式锚定在仓库根，而该文件在子模块下，不加 **/ 匹配不到。
+**/application-local.properties
+**/application-dev.properties
+**/application-prod.properties
+# 上面三条按「完整文件名」匹配，所以 application-dev.properties.example 不受影响，可以入库
+
+# 打包产物
+dist/

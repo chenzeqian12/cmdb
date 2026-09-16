@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <packaging>jar</packaging>
+
+    <parent>
+        <artifactId>hkex-cmdb-sync</artifactId>
+        <groupId>com.cloudwise</groupId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>hkex-cmdb-sync-common</artifactId>
+    <name>hkex-cmdb-sync-common</name>
+    <description>公共基础包：与 HKEX/DOUC/ServiceNow 具体业务无关的通用件</description>
+
+    <!--
+      不额外声明依赖：现有两个类只用到 Lombok，父 POM 已经统一给了。
+      common 的定位是与具体业务无关的通用件，刻意保持零第三方依赖，
+      免得它把 web 容器、HTTP 客户端之类的重量级东西带进每个使用方。
+    -->
+</project>

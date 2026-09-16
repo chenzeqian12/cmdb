@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <packaging>pom</packaging>
+
+    <parent>
+        <groupId>com.cloudwise</groupId>
+        <artifactId>inf-bom</artifactId>
+        <version>3.0.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.cloudwise</groupId>
+    <artifactId>hkex-cmdb-sync</artifactId>
+    <version>1.0.0</version>
+    <name>hkex-cmdb-sync</name>
+    <description>HKEX ServiceNow CMDB to Cloudwise DOUC/EMP data synchronization</description>
+
+    <modules>
+        <module>hkex-cmdb-sync-common</module>
+        <module>hkex-cmdb-sync-server</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- 与 docc 保持一致：checkstyle 配置从云端刷新，失败时回落到仓库里的 checkstyle/checkStyle.xml -->
+        <checkstyle.remote.url>https://docp.cloud.cloudwise.com/architecture/style/checkStyle.xml</checkstyle.remote.url>
+        <checkstyle.local.path>${maven.multiModuleProjectDirectory}/checkstyle/checkStyle.xml</checkstyle.local.path>
+
+        <!--
+          制品命名，沿用 docc / doop-server 的约定：
+            tar 包   hkexCmdbSync-1.0.0-20260916181500-a1b2c3d4e5.tar.gz
+            包内 jar  hkex-cmdb-sync-server-1.0.0-20260916181500-a1b2c3d4e5.jar
+          build.time 由 build-helper-maven-plugin 生成，前缀 0 的提交号由 git-commit-id-plugin 提供。
+        -->
+        <server-name>hkexCmdbSync</server-name>
+        <product-service-version>${project.version}</product-service-version>
+        <final-tar-name>${server-name}-${product-service-version}-${build.time}-${git.commit.id.abbrev}</final-tar-name>
+        <pkg-file-name-mapping>${artifact.artifactId}-${product-service-version}-${build.time}-${git.commit.id.abbrev}.${artifact.extension}
+        </pkg-file-name-mapping>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.cloudwise</groupId>
+                <artifactId>hkex-cmdb-sync-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!--
+      公共依赖放在父 POM 的 dependencies 里，两个模块都继承。
+      本工程只有两个模块，且 server 是 common 的唯一使用方，
+      再往下拆 dependencyManagement 只增加阅读成本。
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 与 docc 一致：启动时尝试从云端拉取最新 checkStyle.xml，拉不到就用仓库里那份 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>refresh-local-checkstyle-config</id>
+                        <phase>initialize</phase>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${maven.multiModuleProjectDirectory}/checkstyle"/>
+                                <get src="${checkstyle.remote.url}"
+                                     dest="${checkstyle.local.path}"
+                                     usetimestamp="true"
+                                     ignoreerrors="true"/>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <configuration>
+                    <configLocation>${checkstyle.local.path}</configLocation>
+                </configuration>
+            </plugin>
+
+            <!-- 生成 build.time（yyyyMMddHHmmss，GMT+8），制品名里要用 -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>timestamp-property</id>
+                        <goals>
+                            <goal>timestamp-property</goal>
+                        </goals>
+                        <configuration>
+                            <name>build.time</name>
+                            <pattern>yyyyMMddHHmmss</pattern>
+                            <locale>zh_CN</locale>
+                            <timeZone>GMT+8</timeZone>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 生成 git.commit.id.abbrev 等属性：制品名要用，同时产出 git.properties 供排查 -->
+            <plugin>
+                <groupId>pl.project13.maven</groupId>
+                <artifactId>git-commit-id-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>get-the-git-infos</id>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- 使属性扩展到整个 maven 构建周期 -->
+                    <injectAllReactorProjects>true</injectAllReactorProjects>
+                    <dateFormat>yyyyMMddHHmmss</dateFormat>
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <gitDescribe>
+                        <skip>false</skip>
+                        <always>false</always>
+                        <abbrev>10</abbrev>
+                        <dirty>-dirty</dirty>
+                        <forceLongFormat>false</forceLongFormat>
+                    </gitDescribe>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

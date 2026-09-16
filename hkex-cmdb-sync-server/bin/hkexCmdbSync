@@ -1,0 +1,232 @@
+#!/bin/bash
+#
+# hkex-cmdb-sync 服务启停脚本。
+#
+# 形态与 docc / doop-server 一致：把 conf/ 挂到 classpath 上（排在 lib/ 之前），
+# 所以改配置只要重启，不需要重新打包。
+#
+# 用法：
+#   ./bin/hkexCmdbSync start            后台启动，默认 prod 配置
+#   ./bin/hkexCmdbSync start -f         前台启动，直接看日志
+#   ./bin/hkexCmdbSync stop | restart | status
+#   SPRING_PROFILE=dev ./bin/hkexCmdbSync start
+#
+# 未经部署工具安装时用 -l（local）模式：以脚本上级目录为服务目录，
+# 日志写 <包根>/logs，pid 写 <包根>/pid，profile 默认 dev，解压即用。
+#   ./bin/hkexCmdbSync start -l -f
+
+CURRENT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+THIS_SCRIPT="$CURRENT_DIR/$(basename "$0")"
+
+######### 服务名 主类
+# 各服务独自维护 #
+# APP_NAME 为服务名，与服务目录保持一致
+APP_NAME="hkexCmdbSync"
+# 服务主类
+MAIN_CLASS="com.cloudwise.cmdb.CmdbSyncApplication"
+# SpringProfile：留空表示由 -l 或下面的默认值决定
+SPRING_PROFILE="${SPRING_PROFILE:-}"
+######### END
+
+######### JVM HEAP SIZE #########
+# ${CW_JVM_HEAP_SIZE} 占位符，由部署工具替换
+# 若环境变量中声明了 ENV_JVM_HEAP_SIZE 则使用环境变量中的值，带单位
+INNER_JVM_HEAP_SIZE_MIN="${CW_JVM_HEAP_SIZE}"
+INNER_JVM_HEAP_SIZE_MAX="${CW_JVM_HEAP_SIZE}"
+######### END
+
+######### 内部变量 部署时自动替换占位符 部署完成后若调整需手动修改变量后面的值
+INNER_RUN_USER="${CW_RUN_USER}"
+INNER_LOCAL_IP="${CW_LOCAL_IP}"
+INNER_APP_DIR="${CW_INSTALL_APP_DIR}"
+INNER_LOG_DIR="${CW_INSTALL_LOGS_DIR}"
+INNER_DATA_DIR="${CW_INSTALL_DATA_DIR}"
+INNER_SERVICE_PORT="${CW_SERVICE_PORT}"
+INNER_METRICS_PORT="${CW_METRICS_PORT}"
+INNER_XXLJOBEXE_PORT="${CW_XXLJOBEXE_PORT}"
+######### END
+
+######### 参数解析：-l 本地模式，-f 前台
+LOCAL_MODE=0
+FOREGROUND=0
+ACTION=""
+for arg in "$@"; do
+    case "$arg" in
+    -l) LOCAL_MODE=1 ;;
+    -f) FOREGROUND=1 ;;
+    *) [ -z "$ACTION" ] && ACTION="$arg" ;;
+    esac
+done
+######### END
+
+######### 服务目录 通过内部变量自动解析
+APP_HOME="${INNER_APP_DIR}/${APP_NAME}"
+APP_LOG_DIR="${INNER_LOG_DIR}/${APP_NAME}"
+APP_PID_FILE="${APP_HOME}/${APP_NAME}.pid"
+APP_CONF_DIR="${APP_HOME}/conf"
+#########
+
+######### 读取部署环境变量（部署工具生成，位于服务安装目录下）
+test -f /etc/profile && . /etc/profile
+test -f "${INNER_APP_DIR}/bash_profile" && . "${INNER_APP_DIR}/bash_profile"
+######### END
+
+######### 本地模式：以脚本上级目录为服务目录，无需任何 CW_* 环境变量
+if [ "${LOCAL_MODE}" -eq 1 ]; then
+    APP_HOME="$(cd "${CURRENT_DIR}/.." &>/dev/null && pwd)"
+    APP_CONF_DIR="${APP_HOME}/conf"
+    APP_LOG_DIR="${APP_HOME}/logs"
+    APP_PID_FILE="${APP_HOME}/pid/${APP_NAME}.pid"
+    mkdir -p "${APP_LOG_DIR}" "${APP_HOME}/pid"
+fi
+# profile 默认值：本地模式用 dev（prod 配的是生产地址，本地跑不起来），部署用 prod
+if [ -z "${SPRING_PROFILE}" ]; then
+    if [ "${LOCAL_MODE}" -eq 1 ]; then SPRING_PROFILE="dev"; else SPRING_PROFILE="prod"; fi
+fi
+######### END
+
+######### Java 命令检查
+if [ -n "${JAVA_HOME}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+    JAVACMD="${JAVA_HOME}/bin/java"
+else
+    JAVACMD="java"
+    which java >/dev/null 2>&1 || echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH."
+fi
+
+JAVA_MAJOR_VERSION=$("${JAVACMD}" -version 2>&1 | sed -E -n 's/.* version "([0-9]*).*$/\1/p')
+if [ -z "${JAVA_MAJOR_VERSION}" ] || [ "${JAVA_MAJOR_VERSION}" -lt 17 ]; then
+    echo "Current Java Version: ${JAVA_MAJOR_VERSION}, Must be upgraded to JDK 17 or above."
+    exit 1
+fi
+######### END
+
+######### CLASSPATH：conf 排在 lib 之前，所以 conf 里的配置优先于 jar 内的同名资源
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    for jar in "${APP_HOME}"/lib/*.jar; do
+        if [ -z "${CW_CLASSPATH}" ]; then
+            CW_CLASSPATH="${jar}"
+        else
+            CW_CLASSPATH="${CW_CLASSPATH}:${jar}"
+        fi
+    done
+    CW_CLASSPATH=".:${APP_CONF_DIR}:${CW_CLASSPATH}"
+else
+    CW_CLASSPATH=".:${APP_CONF_DIR}:${APP_HOME}/lib/*"
+fi
+######### END
+
+######### JVM 参数
+JVM_OPTS="
+ -server
+ -Xms${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MIN}}
+ -Xmx${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MAX}}
+ -XX:+UseG1GC
+ -XX:MaxGCPauseMillis=200
+ -XX:MaxMetaspaceSize=256m
+ -XX:+HeapDumpOnOutOfMemoryError
+ -XX:HeapDumpPath=${APP_LOG_DIR}/java_heapdump.hprof
+ -XX:+ExitOnOutOfMemoryError
+ -Dspring.profiles.active=${SPRING_PROFILE}
+ -Dfile.encoding=UTF-8
+ -DcwLogRootPath=${APP_LOG_DIR}
+ ${SW_OPTS}
+ ${OTHER_OPTS}
+"
+[ -n "${INNER_METRICS_PORT}" ]    && JVM_OPTS="${JVM_OPTS} -DcwMetricsPort=${INNER_METRICS_PORT}"
+[ -n "${INNER_XXLJOBEXE_PORT}" ]  && JVM_OPTS="${JVM_OPTS} -DcwXxlJobExecutorPort=${INNER_XXLJOBEXE_PORT}"
+######### END
+
+######### 服务状态检查
+alive() {
+    PID=$(cat "${APP_PID_FILE}" 2>/dev/null)
+    PS_PID=$(ps -ef | grep "${MAIN_CLASS}" | grep -v grep | awk '{print $2}')
+    ps -p "${PID}" &>/dev/null
+    RETVAL=$?
+    ps -p "${PS_PID}" &>/dev/null
+    PS_RETVAL=$?
+    if [ ${RETVAL} -eq 0 ]; then
+        echo 0
+    elif [ ${PS_RETVAL} -eq 0 ]; then
+        echo 0
+        echo "${PS_PID}" >"${APP_PID_FILE}"
+    else
+        echo ${RETVAL}
+    fi
+}
+######### END
+
+status() {
+    if [ "$(alive)" -eq 0 ]; then
+        echo "${APP_NAME} [running]" | column -t
+    else
+        echo "${APP_NAME} [not running]" | column -t
+    fi
+}
+
+######### 启动
+start_inside() {
+    if [ "$(alive)" -eq 0 ]; then
+        echo "${APP_NAME} [running]" | column -t
+    elif [ "${FOREGROUND}" -eq 1 ]; then
+        echo "前台启动 profile=${SPRING_PROFILE} workdir=${APP_HOME}"
+        cd "${APP_HOME}" && exec ${JAVACMD} ${JVM_OPTS} -classpath "${CW_CLASSPATH}" ${MAIN_CLASS}
+    else
+        cd "${APP_HOME}"
+        nohup ${JAVACMD} ${JVM_OPTS} -classpath "${CW_CLASSPATH}" ${MAIN_CLASS} \
+            1>/dev/null 2>"${APP_LOG_DIR}/start.log" &
+        echo $! >"${APP_PID_FILE}"
+        sleep 1
+        status
+        echo "日志：${APP_LOG_DIR}/start.log"
+    fi
+}
+
+start() {
+    # 本地模式不涉及部署用户切换，直接起
+    if [ "${LOCAL_MODE}" -eq 1 ]; then
+        start_inside
+        return
+    fi
+    user_id=$(id -u)
+    if [ ${user_id} -eq 0 ] && [ -n "${INNER_RUN_USER}" ]; then
+        id "${INNER_RUN_USER}" &>/dev/null || useradd "${INNER_RUN_USER}"
+        chown -R "${INNER_RUN_USER}" "${APP_HOME}" &>/dev/null
+        chown -R "${INNER_RUN_USER}" "${APP_LOG_DIR}" &>/dev/null
+        # 切用户后重跑本脚本，把前台标记一并带过去
+        su "${INNER_RUN_USER}" -c "${THIS_SCRIPT} start_inside ${FOREGROUND:+-f}"
+    else
+        start_inside
+    fi
+}
+
+######### 停止
+stop() {
+    PID=$(cat "${APP_PID_FILE}" 2>/dev/null)
+    if [ -z "${PID}" ]; then
+        PID=$(ps -ef | grep "${MAIN_CLASS}" | grep -v grep | awk '{print $2}')
+    fi
+    kill ${PID} &>/dev/null
+    sleep 2
+    if [ "$(alive)" -eq 0 ]; then
+        kill -9 ${PID} &>/dev/null
+    fi
+    sleep 1
+    status
+    rm -f "${APP_PID_FILE}"
+}
+
+main() {
+    case "$1" in
+    start) start ;;
+    start_inside) start_inside ;;
+    stop) stop ;;
+    restart)
+        stop
+        start
+        ;;
+    status) status ;;
+    *) echo "usage: $0 [-l] [start [-f]|stop|restart|status]" ;;
+    esac
+}
+
+main "${ACTION}"
