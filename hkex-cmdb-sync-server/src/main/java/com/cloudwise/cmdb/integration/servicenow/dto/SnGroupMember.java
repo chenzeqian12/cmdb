@@ -38,11 +38,17 @@ public class SnGroupMember {
     /**
      * 是否为有效记录。
      *
-     * <p>组名与邮箱都非空才算有效，这是后续建组与加人的最小前提。</p>
+     * <p>判定口径必须与同步链路一致，否则测试统计出来的「有效/无效」条数会和实际处理量对不上。
+     * 实际口径在 {@link com.cloudwise.cmdb.pojo.dto.SourceMember#from}：
+     * 组名非空，<b>且</b> {@code user_email}、{@code user_name} 至少有一个非空。</p>
+     *
+     * <p>注意早期版本要求邮箱必填，导致「有 user_name 无 email」的记录被当成脏数据丢弃，
+     * 匹配面被白白缩小（生产上有 4 个邮箱被多个账号共用，必须靠 user_name 兜底）。</p>
      *
      * @return true 表示可以参与同步
      */
     public boolean isValid() {
-        return StringUtils.hasText(group) && StringUtils.hasText(userEmail);
+        return StringUtils.hasText(group)
+                && (StringUtils.hasText(userEmail) || StringUtils.hasText(userName));
     }
 }

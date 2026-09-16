@@ -11,7 +11,7 @@ import org.springframework.util.StringUtils;
 /**
  * 启动自检：必需配置缺失时立即失败，不把问题拖到第一次调用接口。
  *
- * <p>凭据外置到 {@code config/application-local.properties} 之后，jar 本身是「配置无关」的，
+ * <p>凭据外置到 {@code conf/application-{profile}.properties} 之后，jar 本身是「配置无关」的，
  * 漏带配置文件时程序仍能启动，但要等到调用 ServiceNow 或 DOUC 才报 401 / 认证失败，
  * 排查成本高。这里在启动阶段把必填项一次列全，直接中断启动。</p>
  *
@@ -66,8 +66,10 @@ public class ConfigValidator {
 
         if (!missing.isEmpty()) {
             log.error("{}启动自检失败，缺少 {} 项必需配置：{}。"
-                            + "请检查与 jar 平级的 config/application-local.properties"
-                            + "（可从同目录的 .example 复制后填写）",
+                            + "请检查服务目录下的 conf/application-<profile>.properties"
+                            + "（development 用 application-dev.properties，生产用 application-prod.properties，"
+                            + "profile 由启动脚本的 SPRING_PROFILE 决定；"
+                            + "文件不存在时可从 conf/ 下的 .example 复制后填写）",
                     TAG, missing.size(), missing);
             throw new IllegalStateException("缺少必需配置：" + missing);
         }

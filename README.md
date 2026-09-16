@@ -20,7 +20,7 @@ HKEX ServiceNow CMDB → Cloudwise DOUC/EMP 数据同步服务。
 
 ### dev 环境演示结果（2026-09-14）
 
-`mvn test -Dtest=DevGroupPopulationIntegrationTest -Dit.enabled=true`
+`mvn test -Dtest=DevGroupPopulationIntegrationTest -Dit.enabled=true -Dsurefire.failIfNoSpecifiedTests=false`
 
 | 组 | id | 成员数 |
 |---|---|---|
@@ -125,14 +125,19 @@ cp hkex-cmdb-sync-server/conf/application-dev.properties.example \
 mvn test
 
 # 3. dryRun 全链路联调：打印完整同步计划，不写任何数据
-mvn test -Dtest=GroupSyncIntegrationTest -Dit.enabled=true
+mvn test -Dtest=GroupSyncIntegrationTest -Dit.enabled=true \
+         -Dsurefire.failIfNoSpecifiedTests=false
 
 # 4. 小样本端到端（会写 DOUC，跑完自动清理）
-mvn test -Dtest=SmallSampleSyncIntegrationTest -Dit.enabled=true
+mvn test -Dtest=SmallSampleSyncIntegrationTest -Dit.enabled=true \
+         -Dsurefire.failIfNoSpecifiedTests=false
 
 # 5. 打部署包（见下节「打包与部署」）
 mvn clean package
 ```
+
+> `-Dsurefire.failIfNoSpecifiedTests=false` 是必需的：`hkex-cmdb-sync-common` 模块没有测试，
+> 不加这个参数 Maven 会在该模块上报 `No tests matching pattern ... were executed!` 而中断。
 
 ## 打包与部署
 
