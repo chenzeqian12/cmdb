@@ -118,8 +118,6 @@ fi
 ######### JVM 参数
 JVM_OPTS="
  -server
- -Xms${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MIN}}
- -Xmx${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MAX}}
  -XX:+UseG1GC
  -XX:MaxGCPauseMillis=200
  -XX:MaxMetaspaceSize=256m
@@ -132,6 +130,13 @@ JVM_OPTS="
  ${SW_OPTS}
  ${OTHER_OPTS}
 "
+# 堆大小：部署时由 ${CW_JVM_HEAP_SIZE} 占位符注入（部署工具会替换成如 2g）。
+# 未经部署工具替换时该变量为空，直接拼进命令行会变成裸的 -Xms 导致 JVM 起不来，
+# 所以为空时整段不加，交给 JVM 默认值。
+HEAP_SIZE="${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MIN}}"
+if [ -n "${HEAP_SIZE}" ]; then
+    JVM_OPTS="${JVM_OPTS} -Xms${HEAP_SIZE} -Xmx${INNER_JVM_HEAP_SIZE_MAX:-${HEAP_SIZE}}"
+fi
 [ -n "${INNER_METRICS_PORT}" ]    && JVM_OPTS="${JVM_OPTS} -DcwMetricsPort=${INNER_METRICS_PORT}"
 [ -n "${INNER_XXLJOBEXE_PORT}" ]  && JVM_OPTS="${JVM_OPTS} -DcwXxlJobExecutorPort=${INNER_XXLJOBEXE_PORT}"
 ######### END

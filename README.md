@@ -117,8 +117,8 @@ ServiceNow                          hkex-cmdb-sync                      DOUC
 
 ```bash
 # 1. 准备凭据（已 gitignore，不会入库）
-cp config/application-local.properties.example \
-   config/application-local.properties
+cp hkex-cmdb-sync-server/conf/application-dev.properties.example \
+   hkex-cmdb-sync-server/conf/application-dev.properties
 # 填入 SN OAuth 凭据与 DOUC 连接信息
 
 # 2. 单元测试（不触网）
@@ -130,72 +130,90 @@ mvn test -Dtest=GroupSyncIntegrationTest -Dit.enabled=true
 # 4. 小样本端到端（会写 DOUC，跑完自动清理）
 mvn test -Dtest=SmallSampleSyncIntegrationTest -Dit.enabled=true
 
-# 5. 启动服务（开发时）
-mvn spring-boot:run
-
-# 6. 打可部署包（见下节「打包与部署」）
-./build.sh
+# 5. 打部署包（见下节「打包与部署」）
+mvn clean package
 ```
 
 ## 打包与部署
 
-```bash
-./build.sh                  # 构建 + 组装，产物在 dist/
-./build.sh -DskipTests      # 参数透传给 maven
-```
-
-产物是一个自带配置的目录，**直接 scp 到目标机就能跑**：
-
-```
-dist/hkex-cmdb-sync-1.0.0/
-├── hkex-cmdb-sync-server-1.0.0.jar     42M，可执行
-├── start.sh
-└── config/
-    ├── application-local.properties            ← 真实凭据，按环境改这里
-    └── application-local.properties.example    ← 模板，不含凭据
-```
+打包形态与 **docc / doop-server 一致**：`maven-assembly-plugin` 在 `package` 阶段产出 tar.gz，
+CI 的 `.build_template` 直接出这个制品，本地 `mvn clean package` 得到同样的东西。
 
 ```bash
-cd dist/hkex-cmdb-sync-1.0.0
-./start.sh                                   # 前台启动
-./start.sh --douc.dry-run=false              # 命令行参数优先级最高，可临时覆盖
-JAVA_OPTS="-Xmx1g" ./start.sh                # JVM 参数走 JAVA_OPTS
+mvn clean package           # 产物在 hkex-cmdb-sync-server/target/
 ```
 
-### 为什么凭据放在 jar 外面
+制品名沿用同一套命名约定（`build-helper` 出时间戳，`git-commit-id-plugin` 出提交号）：
 
-**jar 本身是「配置无关」的，同一个 jar 配不同 config 就能上不同环境。** 具体做了三件事：
+```
+hkexCmdbSync-1.0.0-20260916183515-89405c43.tar.gz
+```
 
-| 措施 | 作用 |
+包内结构：
+
+```
+hkexCmdbSync/
+├── bin/hkexCmdbSync           启停脚本
+├── conf/                      配置（改完重启生效，不用重新打包）
+│   ├── application.properties       公共配置，与环境无关
+│   ├── application-dev.properties   hkexdev 现场环境
+│   └── application-prod.properties  生产（模板见 .example）
+├── lib/                       主 jar + 57 个 runtime 依赖
+├── logs/  pid/                运行时生成
+└── README.md
+```
+
+部署与启停：
+
+```bash
+tar -xzf hkexCmdbSync-1.0.0-*.tar.gz
+cd hkexCmdbSync
+
+./bin/hkexCmdbSync start -l -f        # 本地/临时：前台运行，日志直接打到终端
+./bin/hkexCmdbSync start -l           # 后台，日志写 logs/start.log
+./bin/hkexCmdbSync status -l
+./bin/hkexCmdbSync stop -l
+
+SPRING_PROFILE=dev ./bin/hkexCmdbSync start    # 指定环境，默认 prod
+```
+
+> `-l`（local）模式以脚本上级目录为服务目录，不需要任何 `CW_*` 部署环境变量，解压即用。
+> 不带 `-l` 时按 Cloudwise 部署工具安装的路径运行（`${CW_INSTALL_APP_DIR}` 等占位符由部署工具替换）。
+
+### 配置为什么放在包外的 conf/
+
+这是 docc / doop-server 的既有约定，`bin/hkexCmdbSync` 把 `conf/` 挂到 classpath 上（**排在 `lib/` 之前**），
+所以 `conf/` 里的配置优先于 jar 内的同名资源：
+
+| 好处 | 说明 |
 |---|---|
-| `application-local.properties` 从 `src/main/resources` 移到工程根的 `config/` | 不再被打进 jar |
-| 服务模块 pom 里对同名文件加 `<resources><excludes>` | 兜底：万一有人复制回 resources，也不会跟着 jar 发出去 |
-| `start.sh` 先把工作目录切到脚本所在目录再启动 | Spring Boot 只读**工作目录**下的 `config/`，不切目录换个 cwd 就加载不到 |
+| 换环境不用重新打包 | 改 `conf/application-{profile}.properties` 重启即可 |
+| 凭据不进 jar | jar 里没有任何环境信息，制品可以放心流转 |
+| 与现有部署流程一致 | 运维不用为这个服务学新东西 |
 
-已实测验证（2026-09-16）：
+环境由启动脚本的 `SPRING_PROFILE` 选择（`-Dspring.profiles.active=${SPRING_PROFILE}`），
+本地 `-l` 模式默认 `dev`，否则默认 `prod`。
 
-| 场景 | 结果 |
-|---|---|
-| 在没有 config 的目录直接 `java -jar` | ✅ 启动自检失败，一次性列出所有缺失项，退出码 1 |
-| 从任意目录执行 `./start.sh` | ✅ 正确加载包内 `config/`，启动成功 |
+**已实测验证（2026-09-16）**：解压 → `./bin/hkexCmdbSync start -l` → 启动自检通过、
+Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进程。
 
-启动自检（`ConfigValidator`）会按 `douc.auth-mode` 分支校验必填项，缺配置时**直接中断启动**，
+启动自检（`ConfigValidator`）按 `douc.auth-mode` 分支校验必填项，**缺配置直接中断启动**并一次列出所有缺失项，
 而不是拖到调用接口才报 401。日志关键字统一为 `【HKEX-CMDB同步】`，方便日志平台检索。
 
 ### 换环境要改什么
 
-只改 `config/application-local.properties`，jar 不用重打：
+只改 `conf/application-{profile}.properties`，不用重新打包：
 
 | 配置 | dev（当前值） | 生产 |
 |---|---|---|
 | `servicenow.*` | HKEX UAT OAuth 账号 | 生产 SN 凭据 |
 | `douc.base-url` | `http://10.106.3.75:18241` | 生产 DOUC 地址 |
-| `douc.auth-mode` | `direct`（无认证直连） | 生产是否允许直连 |
+| `douc.auth-mode` | `direct`（无认证直连） | `apim`（走网关正式鉴权） |
 | `douc.account-id` / `top-account-id` | `110` | 生产租户号 |
 | `douc.user-id` | `1` | 必须有全局用户可见权限 |
 | `douc.dry-run` | `true` | 确认计划无误后再改 `false` |
 
-`config/application-local.properties` 里已经把这组生产配置以注释形式列好，取消注释填值即可。
+生产那份照 `conf/application-prod.properties.example` 复制填写，里面已把要确认的四件事列在文件头。
 
 ### 接口
 
@@ -287,32 +305,49 @@ build-job:
 `PROJECT_LIST` 的写法与 docc 一致。单模块的 `doop-server` 不需要这一段，
 本工程拆成两个模块后要指明制品出自哪个模块。
 
-> **注意**：CI 的 `build-job` 只产出模块 jar（`hkex-cmdb-sync-server-1.0.0.jar`）。
-> 凭据外置之后，可部署单元是 **jar + `config/` + `start.sh`** 三件套，
-> 所以流水线上还要把后两者一起打进制品（本地由 `build.sh` 负责组装）。
-> 部署时**不要**把 `config/application-local.properties` 提交进仓库——它按环境在目标机上填。
+**CI 直接产出可部署的 tar.gz** —— 打包逻辑写在 `hkex-cmdb-sync-server/pom.xml` 的
+`maven-assembly-plugin` 里，流水线只负责 `mvn package`，不需要额外脚本：
+
+```
+mvn package
+  ├── git-commit-id-plugin    → git.commit.id.abbrev / git.commit.time
+  ├── build-helper-maven-plugin → build.time
+  ├── maven-jar-plugin        → thin jar
+  └── maven-assembly-plugin   → hkexCmdbSync-<版本>-<时间>-<提交>.tar.gz
+```
+
+### 配置与流水线的关系
+
+`conf/application-{dev,prod}.properties` **已 gitignore**，所以：
+
+| 构建来源 | 包内 conf/ | 说明 |
+|---|---|---|
+| 本地 `mvn package` | 有 dev 配置 | 现场测试包，解压可直接跑 |
+| CI `build-job` | 只有 `application.properties` | 生产凭据不应进仓库，部署时由运维在目标机补 `application-prod.properties` |
 
 ### 上线前工程侧还缺什么
 
 | 事项 | 谁做 |
 |---|---|
-| **工程要进 GitLab 仓库** | 现在放在本地目录里，不是 git 仓库，流水线第一步 `git checkout` 就会失败 |
+| 把工程推到 GitLab（本地已 `git init` 并完成首次提交） | 开发 |
 | 构建机要能访问 `repo.yunzhihui.com:18081`（inf-bom）与 `docp.cloud.cloudwise.com`（checkStyle.xml） | 运维 |
 
-### 本地构建与 CI 的两处差异
+### 本地构建与 CI 的差异
 
-都是**环境限制，不是工程问题**，CI 上会自然消失：
+只有一条，是**网络限制不是工程问题**，CI 上会自然消失：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `git-commit-id-plugin` 报 `.git directory is not found` | 工程还没进 git 仓库 | `build.sh` 会检测 `.git`：不存在就自动加 `-Dmaven.gitcommitid.skip=true`**（CI 上工程已入 git，不会触发）** |
 | checkstyle 拉不到云端配置 | 本网络不可达 | 工程里已存了 `checkstyle/checkStyle.xml`，父 POM 的 antrun 拉取失败时会保留本地文件（`ignoreerrors="true"`）。docc 也是这么做的 |
+
+> `git-commit-id-plugin` 之前会因工程不是 git 仓库而中断构建，
+> 现在工程已 `git init` 并有提交，这个坑已经消失，**不再需要 `-Dmaven.gitcommitid.skip=true`**。
 
 本地完整构建：
 
 ```bash
-./build.sh              # 自动处理上述两点，并组装出 dist/
-mvn clean test -Dmaven.gitcommitid.skip=true   # 只要跑测试不想打包时
+mvn clean package        # 测试 + 打包，一步到位
+mvn test                 # 只要跑测试
 ```
 
 ### 代码规范（踩过的坑）
@@ -582,14 +617,9 @@ deleteUserGroupUsersByUserAlias(GroupAndUserId)
 
 ```
 hkex-cmdb-sync/
-├── pom.xml                              父 POM：inf-bom + 模块声明 + checkstyle
-├── build.sh                             构建 + 组装 dist/（jar + config/）
+├── pom.xml                              父 POM：inf-bom + 模块声明 + checkstyle + 制品命名
 ├── checkstyle/checkStyle.xml            云端拉不到时的本地兜底（docc 同款）
-├── config/                              环境配置，不打进 jar（见「打包与部署」）
-│   ├── application-local.properties          真实凭据，已 gitignore
-│   └── application-local.properties.example  模板
-├── src/main/scripts/start.sh            随包发布，负责切工作目录后启动
-├── .gitlab-ci.yml
+├── .gitlab-ci.yml                       走 docp/architecture 的 .build_template
 │
 ├── hkex-cmdb-sync-common/               公共基础包（零第三方依赖）
 │   └── src/main/java/com/cloudwise/cmdb/common/
@@ -597,6 +627,12 @@ hkex-cmdb-sync/
 │       └── exception/IntegrationException.java  集成异常
 │
 └── hkex-cmdb-sync-server/               主服务
+    ├── bin/hkexCmdbSync                 启停脚本（conf 挂 classpath，含 -l 本地模式）
+    ├── conf/                            配置目录，随包发布，不进 jar
+    │   ├── application.properties             公共配置（可入库）
+    │   ├── application-dev.properties         hkexdev 现场环境（含凭据，已 gitignore）
+    │   └── application-prod.properties.example 生产模板
+    ├── src/main/assembly/assembly.xml   打包描述：bin/conf/lib → tar.gz
     └── src/main/java/com/cloudwise/cmdb/
         ├── CmdbSyncApplication.java     启动类
         ├── config/
