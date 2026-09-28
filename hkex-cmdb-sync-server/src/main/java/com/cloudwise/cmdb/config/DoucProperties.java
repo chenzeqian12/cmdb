@@ -110,4 +110,10 @@ public class DoucProperties {
      * <p>默认 true，避免误触把数据写进目标环境。</p>
      */
     private boolean dryRun = true;
+
+    /** 是否删除已由本服务创建、但本次 SN 不再返回的用户组。默认关闭。 */
+    private boolean deleteMissingGroups;
+
+    /** 同步组快照文件；生产应配置到升级后仍会保留的位置。 */
+    private String groupSyncStateFile = "./data/douc-managed-groups.json";
 }

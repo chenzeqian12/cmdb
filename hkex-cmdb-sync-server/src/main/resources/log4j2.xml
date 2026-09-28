@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  日志配置。放在 conf/ 里，由 bin/hkexCmdbSync 挂到 classpath 上。
+  日志配置。随 jar 发布（src/main/resources/log4j2.xml），在 classpath 上自动生效。
 
   为什么必须有这个文件：
-    bin/hkexCmdbSync 后台启动时把 stdout 重定向到 /dev/null（docc 同款做法），
-    若没有文件 appender，日志只走 console，就全部丢进 /dev/null —— 后台跑起来后
-    一条业务日志都查不到。docc / doop-server 都靠 conf/log4j2*.xml 落盘。
+    后台启动时 stdout/stderr 被重定向到 logs/app.out.log、logs/app.err.log，
+    若没有文件 appender，日志只走 console —— 滚动归档、ERROR 单独一份这些都没了。
 
-  日志目录：启动脚本传了 -DcwLogRootPath=<服务目录>/logs，取不到时回落到相对路径 logs。
+  日志目录：启动脚本传 -DcwLogRootPath=<插件目录>/logs 注入，
+            取不到时回落到 CWD 下的相对路径 logs/（IDE 里直接跑也能用）。
 -->
 <Configuration status="WARN">
 
     <Properties>
-        <!-- bin/hkexCmdbSync 注入的绝对路径优先，独立跑（如 IDE 里）时回落 logs/ -->
+        <!-- agentctl / run.sh 注入的绝对路径优先 -->
         <Property name="LOG_HOME">${sys:cwLogRootPath:-logs}</Property>
         <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n</Property>
     </Properties>

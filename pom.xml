@@ -14,7 +14,7 @@
 
     <groupId>com.cloudwise</groupId>
     <artifactId>hkex-cmdb-sync</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.5</version>
     <name>hkex-cmdb-sync</name>
     <description>HKEX ServiceNow CMDB to Cloudwise DOUC/EMP data synchronization</description>
 
@@ -106,6 +106,19 @@
                 <artifactId>maven-checkstyle-plugin</artifactId>
                 <configuration>
                     <configLocation>${checkstyle.local.path}</configLocation>
+                </configuration>
+            </plugin>
+
+            <!--
+              JDK 23 起 javac 默认不再自动扫描 classpath 上的注解处理器。
+              本工程的 DTO 和配置类依赖 Lombok 生成 accessor，显式开启后本地与 CI
+              使用较新 JDK 时仍能正常编译。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <proc>full</proc>
                 </configuration>
             </plugin>
 

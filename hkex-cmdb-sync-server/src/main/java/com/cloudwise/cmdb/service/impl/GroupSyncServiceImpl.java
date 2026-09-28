@@ -11,6 +11,7 @@ import com.cloudwise.cmdb.pojo.dto.GroupMemberPlan;
 import com.cloudwise.cmdb.pojo.dto.GroupSyncResult;
 import com.cloudwise.cmdb.pojo.dto.SourceMember;
 import com.cloudwise.cmdb.service.GroupSyncService;
+import com.cloudwise.cmdb.service.GroupSyncStateStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -21,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -48,12 +50,16 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
     private final DoucProperties doucProperties;
 
+    private final GroupSyncStateStore groupSyncStateStore;
+
     public GroupSyncServiceImpl(ServiceNowClient serviceNowClient,
                                 DoucClient doucClient,
-                                DoucProperties doucProperties) {
+                                DoucProperties doucProperties,
+                                GroupSyncStateStore groupSyncStateStore) {
         this.serviceNowClient = serviceNowClient;
         this.doucClient = doucClient;
         this.doucProperties = doucProperties;
+        this.groupSyncStateStore = groupSyncStateStore;
     }
 
     @Override
@@ -85,9 +91,62 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             }
         }
 
+        // 成员同步全部成功后再删已缺失的组，避免成员同步失败时已发生删组。
+        syncMissingGroups(sourceGroups, existingGroups, result);
+        saveManagedGroups(sourceGroups, groupIds, result);
+
         result.setElapsedMillis(System.currentTimeMillis() - startedAt);
         log.info("用户组同步结束，{}，耗时 {} ms", summary(result), result.getElapsedMillis());
         return result;
+    }
+
+    /**
+     * 删除上次由本服务创建、但本次 SN 已不存在的用户组。
+     *
+     * <p>同时校验组 ID，避免同名旧组被人工删除并重建后，误删新的手工组。</p>
+     */
+    private void syncMissingGroups(Map<String, Set<SourceMember>> sourceGroups,
+                                   Map<String, Long> existingGroups,
+                                   GroupSyncResult result) {
+        Map<String, Long> managedGroups = groupSyncStateStore.loadManagedGroups();
+        for (Map.Entry<String, Long> entry : managedGroups.entrySet()) {
+            String groupName = entry.getKey();
+            if (sourceGroups.containsKey(groupName)) {
+                continue;
+            }
+            Long currentGroupId = existingGroups.get(groupName);
+            if (!Objects.equals(entry.getValue(), currentGroupId)) {
+                log.warn("跳过删除不再受本服务管理的 DOUC 组，name={}，记录 id={}，当前 id={}",
+                        groupName, entry.getValue(), currentGroupId);
+                continue;
+            }
+            result.getGroupsToDelete().add(groupName);
+            if (result.isDryRun() || !doucProperties.isDeleteMissingGroups()) {
+                continue;
+            }
+            doucClient.deleteGroup(currentGroupId);
+            result.getDeletedGroups().add(groupName);
+        }
+    }
+
+    /** 保存仍受本服务管理的组；dryRun 不修改快照。 */
+    private void saveManagedGroups(Map<String, Set<SourceMember>> sourceGroups,
+                                   Map<String, Long> groupIds,
+                                   GroupSyncResult result) {
+        if (result.isDryRun() || !result.getFailedGroups().isEmpty()) {
+            return;
+        }
+        Map<String, Long> managedGroups = new LinkedHashMap<>(groupSyncStateStore.loadManagedGroups());
+        for (String deletedGroup : result.getDeletedGroups()) {
+            managedGroups.remove(deletedGroup);
+        }
+        for (String createdGroup : result.getCreatedGroups()) {
+            Long groupId = groupIds.get(createdGroup);
+            if (groupId != null && sourceGroups.containsKey(createdGroup)) {
+                managedGroups.put(createdGroup, groupId);
+            }
+        }
+        groupSyncStateStore.saveManagedGroups(managedGroups);
     }
 
     /**
@@ -316,6 +375,8 @@ public class GroupSyncServiceImpl implements GroupSyncService {
         parts.put("新建组", result.getCreatedGroups().size());
         parts.put("已存在组", result.getExistingGroups().size());
         parts.put("失败组", result.getFailedGroups().size());
+        parts.put("待删组", result.getGroupsToDelete().size());
+        parts.put("已删组", result.getDeletedGroups().size());
         if (result.isMemberSyncExecuted()) {
             parts.put("匹配用户", result.getMatchedUserCount());
             parts.put("未匹配", result.getUnmatchedUserCount());

@@ -13,3 +13,39 @@ build-job:
     matrix:
       - PROJECT_LIST:
           - hkex-cmdb-sync-server
+
+# 与 docc 的 OMP 部署链路保持一致：上传 tar 包后，由 OMP 统一执行升级或回滚。
+# 主机、账号、SSH 私钥和 known_hosts 均须在 GitLab 受保护 CI/CD Variables 中配置，
+# 禁止把环境密码或 IP 写入仓库。
+deploy-omp:
+  stage: deploy
+  variables:
+    OMP_PORT: "22"
+    OMP_SERVICE_NAME: "hkexCmdbSync"
+  rules:
+    - if: '$OMP_HOST && $OMP_USER && $OMP_SSH_PRIVATE_KEY && $OMP_KNOWN_HOSTS'
+      when: manual
+    - when: never
+  before_script:
+    - command -v ssh
+    - command -v scp
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - printf '%s\n' "$OMP_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_omp
+    - chmod 600 ~/.ssh/id_omp
+    - printf '%s\n' "$OMP_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - chmod 600 ~/.ssh/known_hosts
+  script:
+    - |
+      set -eu
+      mvn -pl hkex-cmdb-sync-server -am -DskipTests package
+      artifact=$(find hkex-cmdb-sync-server/target -maxdepth 1 -type f -name 'hkexCmdbSync-*.tar.gz' -print -quit)
+      test -n "$artifact"
+      scp -i ~/.ssh/id_omp -P "$OMP_PORT" "$artifact" \
+        "$OMP_USER@$OMP_HOST:/data/omp/packages/upgrade_packages/"
+      if ! ssh -i ~/.ssh/id_omp -p "$OMP_PORT" "$OMP_USER@$OMP_HOST" \
+          "bash /data/omp/scripts/deploy upgrade '$OMP_SERVICE_NAME'"; then
+        ssh -i ~/.ssh/id_omp -p "$OMP_PORT" "$OMP_USER@$OMP_HOST" \
+          "bash /data/omp/scripts/deploy roll_back '$OMP_SERVICE_NAME'"
+        exit 1
+      fi

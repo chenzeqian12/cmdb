@@ -43,6 +43,12 @@ public class GroupSyncResult {
     /** 创建失败的组：组名 -> 失败原因。 */
     private final List<String> failedGroups = new ArrayList<>();
 
+    /** 上次由本服务创建、但本次 SN 未返回的待删除组。 */
+    private final List<String> groupsToDelete = new ArrayList<>();
+
+    /** 本次已从 DOUC 删除的组。 */
+    private final List<String> deletedGroups = new ArrayList<>();
+
     // ---------- 需求 2：按用户组分类用户 ----------
 
     /** 每个组的成员归类计划与结果。 */

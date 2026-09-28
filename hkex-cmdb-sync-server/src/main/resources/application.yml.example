@@ -1,0 +1,124 @@
+# ===========================================================================
+# hkex-cmdb-sync · OmniAgent 插件形态的主配置（模板）
+#
+# 用法：cp application.yml.example application.yml，把 <...> 换成现场真实值。
+#       application.yml 已被 .gitignore 排除，不会入库；本模板可以入库。
+#
+# 形态与 EventAgent(GCP) / CDC 一致：**单文件 YAML，不再分 profile**。
+# 平台下发（PARAM_JSON_CONF / --jsonConf=）会整体覆盖本文件，优先级更高。
+# ===========================================================================
+
+spring:
+  application:
+    name: hkex-cmdb-sync
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  # 插件形态用 18081（docc 形态才是 18080）。
+  # 18080 在 hkexdev 的 10.106.3.74 上被 nginx 占了，放这个端口会起不来。
+  port: 18081
+  shutdown: graceful
+
+logging:
+  level:
+    com.cloudwise.cmdb: INFO
+
+# ---------------------------------------------------------------------------
+# ServiceNow
+# ---------------------------------------------------------------------------
+servicenow:
+  base-url: <生产/测试 SN 地址，如 https://hkexgroupuat.service-now.com>
+  token-path: /oauth_token.do
+  client-id: <OAuth client id>
+  client-secret: <OAuth client secret>
+  username: <OAuth 用户名>
+  password: <OAuth 密码>
+  group-query: group.nameENDSWITH_SUP
+  page-size: 5000
+  connect-timeout: 10000
+  read-timeout: 120000
+  token-refresh-ahead-seconds: 300
+
+# ---------------------------------------------------------------------------
+# DOUC
+# ---------------------------------------------------------------------------
+douc:
+  base-url: <DOUC 地址，如 http://10.106.3.75:18241>
+  gateway-prefix: /douc
+  api-prefix: /api/v1
+  language: zh_CN
+  # direct（直连端口，无认证）/ apim（走网关，需 app-key + app-secret）/ cookie（浏览器会话，会过期）
+  auth-mode: direct
+  sign-mode: sm3
+
+  # ⚠️ /user/list 按调用人可见范围过滤：填错**不报错**，只会让匹配率静默归零。
+  #    上线前务必用只读接口 POST /sync/groups/match-check 实测一次。
+  user-id: <能看到全部用户的账号 ID>
+  account-id: <租户 ID>
+  top-account-id: <租户 ID>
+
+  # 留空 = 用户组平铺在顶层；填组 ID 则挂到该父组下
+  parent-group-id: ""
+  default-group-type: 1
+  user-page-size: 500
+  connect-timeout: 10000
+  read-timeout: 60000
+
+  # 试运行开关：true 只算差异不写数据。确认计划无误后再改 false
+  dry-run: true
+
+# 走网关（auth-mode=apim）时补上这两项，并让上面 auth-mode 改成 apim
+#   app-key: <APIM appKey>
+#   app-secret: <APIM appSecret>
+
+# ---------------------------------------------------------------------------
+# XXL-Job 定时任务（cron 在 XXL-Job 管理后台配：0 0 3 * * ?）
+# ---------------------------------------------------------------------------
+xxl:
+  job:
+    admin:
+      address: "${XXL_JOB_ADMIN_ADDRESS:}"
+    accessToken: "${XXL_JOB_ACCESS_TOKEN:}"
+    executor:
+      app.name: hkex-cmdb-sync
+      port: 18599
+      log.path: ./logs/jobhandler
+      log.retention.days: 7
+      ip: ""
+
+hkex:
+  # -------------------------------------------------------------------------
+  # 每日同步定时任务（进程内调度，不依赖 XXL-Job，现场不接调度中心也能自己跑）
+  #
+  # cron 是 Spring 的 6 段格式：秒 分 时 日 月 周
+  #   0 0 3 * * ?   每天凌晨 3 点（默认）
+  #   0 30 2 * * ?  每天凌晨 2:30
+  #   0 0 3 * * MON  每周一凌晨 3 点
+  #
+  # 写不写数据由上面 douc.dry-run 决定：true 时只出计划不落库。
+  # 不想要自动同步就设 scheduled-enabled: false（下面两个触发条件一起失效）。
+  # -------------------------------------------------------------------------
+  sync:
+    # 总开关。false = 启动触发和定时触发都不生效
+    scheduled-enabled: true
+
+    # 服务每次启动后跑一次同步（平台重启插件、升级换版本都会触发）
+    on-startup: true
+    # 启动后等几秒再跑，别设 0
+    startup-delay-seconds: 30
+
+    # 每日定时同步
+    cron: "0 0 3 * * ?"
+
+    # 是否同时按组配人（需求2）。false = 只建组不动成员
+    member-sync: true
+
+  # -------------------------------------------------------------------------
+  # OmniAgent 插件心跳（底座据此判断插件健康状态）
+  # 相对路径基于进程 CWD —— agentctl 启动前会 cd 到插件目录，故 ./heartbeat 落在版本根。
+  # -------------------------------------------------------------------------
+  heartbeat:
+    enabled: true
+    file: ./heartbeat
+    interval-seconds: 30

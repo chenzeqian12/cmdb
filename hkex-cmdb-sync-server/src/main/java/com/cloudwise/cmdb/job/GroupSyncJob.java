@@ -91,6 +91,9 @@ public class GroupSyncJob {
                 result.getCreatedGroups().size(), result.getExistingGroups().size(),
                 result.getFailedGroups().size()));
 
+        XxlJobHelper.log(String.format("缺失组处理：待删除 %d 个，已删除 %d 个",
+                result.getGroupsToDelete().size(), result.getDeletedGroups().size()));
+
         XxlJobHelper.log(String.format(
                 "需求2 配人：匹配上 %d 人，未匹配 %d 人",
                 result.getMatchedUserCount(), result.getUnmatchedUserCount()));

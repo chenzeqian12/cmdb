@@ -66,10 +66,9 @@ public class ConfigValidator {
 
         if (!missing.isEmpty()) {
             log.error("{}启动自检失败，缺少 {} 项必需配置：{}。"
-                            + "请检查服务目录下的 conf/application-<profile>.properties"
-                            + "（development 用 application-dev.properties，生产用 application-prod.properties，"
-                            + "profile 由启动脚本的 SPRING_PROFILE 决定；"
-                            + "文件不存在时可从 conf/ 下的 .example 复制后填写）",
+                            + "请检查插件目录下的 conf/application.yml"
+                            + "（模板见工程里的 src/main/resources/application.yml.example，"
+                            + "或由平台通过 PARAM_JSON_CONF 下发）",
                     TAG, missing.size(), missing);
             throw new IllegalStateException("缺少必需配置：" + missing);
         }

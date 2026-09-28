@@ -1,0 +1,609 @@
+#!/usr/bin/env sh
+
+set -eu
+
+BASE_DIR=$(cd "$(dirname "$0")/.." && pwd)
+REAL_BASE_DIR=$(cd "$(dirname "$0")/.." && pwd -P)
+APP_VERSION=$(basename "$REAL_BASE_DIR")
+# 本 agent 的安装根：current 软链与真实版本目录都挂在它下面，所以用它做前缀能同时覆盖
+# 两种启动路径（历史踩坑：按完整绝对路径匹配时，current 启动 / 真实路径 stop 会互相认不出）。
+# 加这层限定的目的是：同机上若存在第二个同名插件实例，双方进程特征完全一致
+# （argv0=hkexcmdbsync、-Dhkex.app-home=、-Dhkex.main-class=），不加限定会互相误判、误杀。
+# 注意不能按 jar 名匹配 —— 本工程用 `-classpath 'lib/*'` 启动（thin jar），
+# 命令行里只有字面的 `lib/*`，看不见具体 jar 文件名。
+# ⚠️ 这里必须用**逻辑路径**（pwd，不解析软链），不能用 pwd -P：
+# 启动时写进命令行的 -Dhkex.app-home= 就是 BASE_DIR 的逻辑路径，
+# 用物理路径去 grep 会一个都匹配不到。踩过的坑：macOS 上 /tmp 是 /private/tmp 的软链，
+# 装到 /tmp 下时 pwd -P 得到 /private/tmp/...，而命令行里是 /tmp/... → 进程永远认不出来。
+AGENT_ROOT_DIR=$(cd "$BASE_DIR/.." 2>/dev/null && pwd || echo "")
+if [ -n "$AGENT_ROOT_DIR" ]; then
+  AGENT_PATH_GREP="${AGENT_ROOT_DIR}/"
+  AGENT_PROC_PATTERN="${AGENT_ROOT_DIR}/.*-Dhkex[.]main-class=[^ ]*"
+else
+  # 取不到安装根时退回原行为：宁可宽松，也不要完全匹配不到自己的进程。
+  AGENT_PATH_GREP="hkexcmdbsync"
+  AGENT_PROC_PATTERN="-Dhkex[.]main-class=[^ ]*"
+fi
+PID_FILE="$BASE_DIR/run/hkexcmdbsync.pid"
+APP_JAR=""
+LIB_DIR=""
+# 主类：thin jar + lib/* 的启动方式需要显式指定。同时也是进程识别用的稳定特征
+# （放在命令行靠前位置，避免 ps 输出被截断时匹配不到）。
+MAIN_CLASS="com.cloudwise.cmdb.CmdbSyncApplication"
+JAVA_HOME=${JAVA_HOME:-}
+JAVA_BIN=${JAVA_BIN:-}
+APP_HOME_DEFAULT="$BASE_DIR"
+APP_HOME=${APP_HOME:-$APP_HOME_DEFAULT}
+DEFAULT_CONF_FILE="$BASE_DIR/conf/application.yml"
+DEFAULT_COMMON_INI="$BASE_DIR/../../../conf/common.ini"
+COMMON_INI=${COMMON_INI:-$DEFAULT_COMMON_INI}
+if [ -f "$DEFAULT_CONF_FILE" ]; then
+  CONF_FILE=${CONF_FILE:-$DEFAULT_CONF_FILE}
+else
+  CONF_FILE=${CONF_FILE:-$BASE_DIR/../src/main/resources/application.yml}
+fi
+LOG_DIR=${LOG_DIR:-$BASE_DIR/logs}
+OUT_LOG="$LOG_DIR/app.out.log"
+ERR_LOG="$LOG_DIR/app.err.log"
+IDENTITY_FILE="$BASE_DIR/install.identity"
+RUN_USER=${RUN_USER:-}
+RUN_GROUP=${RUN_GROUP:-}
+
+mkdir -p "$BASE_DIR/run" "$LOG_DIR" "$APP_HOME"
+
+if ! cd "$BASE_DIR"; then
+  echo "fail: unable to access app home $BASE_DIR"
+  exit 1
+fi
+
+parse_identity_value() {
+  key="$1"
+  awk -F= -v target="$key" '
+    $1 == target {
+      $1=""
+      sub(/^=/, "", $0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      print $0
+      exit
+    }
+  ' "$IDENTITY_FILE"
+}
+
+validate_identity_name() {
+  value="$1"
+  kind="$2"
+  if ! printf '%s' "$value" | grep -Eq '^[A-Za-z_][A-Za-z0-9_.-]*[$]?$'; then
+    echo "fail: invalid $kind '$value' in identity"
+    exit 1
+  fi
+}
+
+load_run_identity() {
+  if [ -f "$IDENTITY_FILE" ]; then
+    # 优先使用显式 RUN_USER/RUN_GROUP（新 identity）；兼容旧 identity 仅有 INSTALL_*。
+    [ -n "$RUN_USER" ] || RUN_USER=$(parse_identity_value RUN_USER)
+    [ -n "$RUN_USER" ] || RUN_USER=$(parse_identity_value INSTALL_USER)
+    [ -n "$RUN_GROUP" ] || RUN_GROUP=$(parse_identity_value RUN_GROUP)
+    [ -n "$RUN_GROUP" ] || RUN_GROUP=$(parse_identity_value INSTALL_GROUP)
+  fi
+
+  if [ -z "$RUN_USER" ]; then
+    RUN_USER=$(id -un 2>/dev/null || true)
+  fi
+  if [ -z "$RUN_GROUP" ]; then
+    RUN_GROUP=$(id -gn "$RUN_USER" 2>/dev/null || id -gn 2>/dev/null || true)
+  fi
+
+  # 不做降权，因此这里不再拒绝 root、也不强制 RUN_USER 存在（与 CDC 一致）：
+  # RUN_USER 仅用于安装属主与提示，调用者是谁就以谁运行。
+  if ! id -u "$RUN_USER" >/dev/null 2>&1; then
+    echo "warn: configured RUN_USER '$RUN_USER' does not exist; falling back to current user"
+    RUN_USER=$(id -un 2>/dev/null || true)
+    RUN_GROUP=$(id -gn 2>/dev/null || true)
+  fi
+}
+
+# 运行身份：与 CDC 一致 —— 不做降权，谁调用 agentctl 就以谁运行。
+# RUN_USER（install.identity）只用于安装时定属主；这里若与调用者不一致仅告警。
+# 刻意不用 sudo -u 降权：会引入 sudo 包装进程，导致 pid 误记 root、
+# 非 root 用户 kill 不掉、卸载失败等一串问题（CDC 也无此机制）。
+resolve_runas() {
+    current_user=$(id -un 2>/dev/null || true)
+  if [ -n "$RUN_USER" ] && [ "$current_user" != "$RUN_USER" ]; then
+    echo "warn: current user '$current_user' != configured RUN_USER '$RUN_USER'; running as '$current_user'"
+  fi
+}
+
+load_run_identity
+
+resolve_app_jar() {
+  if [ -d "$BASE_DIR/lib" ]; then
+    APP_JAR=$(find "$BASE_DIR/lib" -maxdepth 1 -type f -name 'hkex-cmdb-sync-server-*.jar' ! -name '*sources.jar' ! -name '*javadoc.jar' | head -n 1)
+  fi
+  if [ -z "$APP_JAR" ]; then
+    APP_JAR=$(find "$BASE_DIR/../target" -maxdepth 1 -type f -name 'hkex-cmdb-sync-server-*.jar' ! -name '*sources.jar' ! -name '*javadoc.jar' | head -n 1)
+  fi
+  # 依赖 jar 与主 jar 同放 lib/，启动走 -classpath 'lib/*' + 主类名。
+  # 注意本工程是 docc 同款的 **thin jar**（MANIFEST 里没有 Main-Class），
+  # 不能像 GCP 的 event-agent 那样用 `-jar` 直接跑。
+  LIB_DIR="$BASE_DIR/lib"
+  [ -d "$LIB_DIR" ] || LIB_DIR="$BASE_DIR/../target"
+}
+
+require_java() {
+  if [ -x "$BASE_DIR/jre/bin/java" ]; then
+    JAVA_BIN="$BASE_DIR/jre/bin/java"
+    return
+  fi
+  if [ -n "$JAVA_BIN" ] && [ -x "$JAVA_BIN" ]; then
+    return
+  fi
+  if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA_BIN="$JAVA_HOME/bin/java"
+    return
+  fi
+  JAVA_BIN=$(command -v java || true)
+  if [ ! -x "$JAVA_BIN" ]; then
+    echo "fail: java not found. Set JAVA_HOME or JAVA_BIN explicitly."
+    exit 1
+  fi
+}
+
+read_pid() {
+  if [ -f "$PID_FILE" ]; then
+    cat "$PID_FILE"
+  else
+    echo ""
+  fi
+}
+
+read_common_ini_value() {
+  key="$1"
+  if [ ! -f "$COMMON_INI" ]; then
+    echo ""
+    return 0
+  fi
+  awk -F= -v target="$key" '
+    /^\[common\]$/ { in_section=1; next }
+    /^\[/ && $0 != "[common]" { in_section=0 }
+    in_section {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+      if ($1 == target) {
+        $1=""
+        sub(/^=/, "", $0)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+        print $0
+        exit
+      }
+    }
+  ' "$COMMON_INI"
+}
+
+load_common_ini() {
+  COMMON_CONFIG_SERVER=$(read_common_ini_value config_server)
+  COMMON_DATA_SERVER=$(read_common_ini_value data_server)
+  COMMON_FILE_SERVER=$(read_common_ini_value file_server)
+  COMMON_HOST_IP=$(read_common_ini_value ip)
+}
+
+is_json_config() {
+  [ -f "$CONF_FILE" ] && grep -q '^[[:space:]]*{' "$CONF_FILE" 2>/dev/null
+}
+
+read_json_config() {
+  tr -d '\n' < "$CONF_FILE"
+}
+
+# 判断某个 pid 是不是本应用进程。
+# 注意：不能按"启动时的绝对路径"匹配（current 软链 vs 真实版本目录会不一致，
+# 曾导致"用 current 启动、用真实路径 stop 时误判未运行 → 卸载删文件时进程还在"）。
+# 改为路径无关的三要素：argv0=hkexcmdbsync（exec -a 设置）+ -Dhkex.app-home= + -Dhkex.main-class=
+process_matches_app() {
+  PID="$1"
+  command_line=$(ps -p "$PID" -o command= 2>/dev/null || true)
+  [ -n "$command_line" ] \
+    && echo "$command_line" | grep -F -- "$AGENT_PATH_GREP" >/dev/null 2>&1 \
+    && echo "$command_line" | grep -F -- "-Dhkex.app-home=" >/dev/null 2>&1 \
+    && echo "$command_line" | grep -F -- "-Dhkex.main-class=" >/dev/null 2>&1 \
+    && ! is_wrapper_command "$command_line"
+}
+
+# 启动包装链（sudo / nohup / bash -c ...）的命令行里同样带着这些 -D 参数，
+# 只按特征串匹配会把包装进程（多为 root 属主）误当成服务进程 —— 必须排除。
+is_wrapper_command() {
+  echo "$1" | grep -qE 'sudo |nohup |bash -c'
+}
+
+# 取"真正的 java 进程"PID 列表（限定本安装根 + 排除包装进程）。
+_agent_java_pids() {
+  ps -ef \
+    | grep -F -- "$AGENT_PATH_GREP" \
+    | grep -F -- "-Dhkex.app-home=" \
+    | grep -F -- "-Dhkex.main-class=" \
+    | grep -v grep \
+    | grep -vE 'sudo |nohup |bash -c' \
+    | awk '{print $2}'
+}
+
+process_exists() {
+  PID="$1"
+  [ -n "$PID" ] && ps -p "$PID" >/dev/null 2>&1
+}
+
+is_running() {
+  PID=$(read_pid)
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && process_matches_app "$PID"; then
+    return 0
+  fi
+  # PID 文件不存在或无效时，直接扫描进程列表查找（只认真正的 java 进程）
+  rm -f "$PID_FILE" 2>/dev/null || true
+  _FOUND_PID=$(_agent_java_pids | head -1)
+  if [ -n "$_FOUND_PID" ]; then
+    echo "$_FOUND_PID" > "$PID_FILE" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
+# ── 真实 java 进程定位 / 停止辅助 ──────────────────────────────────
+# 启动链：[sudo] nohup bash -c 'exec -a hkexcmdbsync "$@"' → exec 后 java 复用该 shell 的 PID。
+# 但 $! 拿到的是最外层 sudo/nohup 包装进程，不是 java 本体；若直接用它写 PID 文件，
+# stop 会杀掉包装壳而把 java 留下（且 sudo 壳属主是 root，非 root 用户 kill 还会 EPERM）。
+resolve_real_agent_pid() {
+  _tries=0
+  while [ "$_tries" -lt 10 ]; do
+    _found=$(_agent_java_pids | head -1)
+    if [ -n "$_found" ]; then
+      printf '%s' "$_found"
+      return 0
+    fi
+    sleep 1
+    _tries=$((_tries + 1))
+  done
+  return 1
+}
+
+# 按进程特征判断 agent 是否仍在运行（只算真正的 java 进程，不含包装壳）
+_agent_still_running() {
+  [ -n "$(_agent_java_pids)" ]
+}
+
+# AGENT_PROC_PATTERN 见文件顶部：pkill -f 用 ERE，按"本安装根下的事件代理 jar"匹配，
+# 兼容 current 软链与真实版本目录两种路径，并避免波及同机其它实例。
+
+# 按进程特征清理（兜底：处理陈旧 PID / 包装壳 / 被 init 收养的孤儿 java）
+_pkill_agent() {
+  command -v pkill >/dev/null 2>&1 || return 1
+  pkill -TERM -f -- "$AGENT_PROC_PATTERN" 2>/dev/null || true
+  _n=0
+  while [ "$_n" -lt 5 ]; do
+    _agent_still_running || return 0
+    sleep 1
+    _n=$((_n + 1))
+  done
+  pkill -9 -f -- "$AGENT_PROC_PATTERN" 2>/dev/null || true
+  return 0
+}
+
+wait_for_stop() {
+  PID="$1"
+  timeout_seconds=15
+  elapsed=0
+  while process_exists "$PID" && process_matches_app "$PID"; do
+    if [ "$elapsed" -ge "$timeout_seconds" ]; then
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 0
+}
+
+wait_for_start() {
+  PID="$1"
+  timeout_seconds=5
+  elapsed=0
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    if ! kill -0 "$PID" 2>/dev/null; then
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 0
+}
+
+usage() {
+  echo "usage: $0 {start|stop|status|restart|info|log}"
+}
+
+status() {
+  if is_running; then
+    echo "Cloudwise hkexcmdbsync is running. Cloudwise hkexcmdbsync pid: $(read_pid)"
+  else
+    echo "Cloudwise hkexcmdbsync is not running. Cloudwise hkexcmdbsync process not found or stop."
+  fi
+}
+
+_ensure_config() {
+  # 仅在配置文件缺失时补内置默认配置，避免覆盖平台或用户已下发的内容。
+  if [ ! -f "$CONF_FILE" ]; then
+    if ! mkdir -p "$(dirname "$CONF_FILE")"; then
+      echo "fail: unable to create config directory for $CONF_FILE"
+      return 1
+    fi
+    # 这里只补一个「字段齐全、凭据留空」的骨架。服务缺凭据本来就跑不起来，
+    # 写骨架的目的不是让它能启动，而是让 ConfigValidator 一次列全缺哪些键
+    # （而不是抛一个看不懂的 NPE 或者等到调接口才报 401）。
+    if ! cat > "$CONF_FILE" <<DEFAULT_CONF
+# 配置缺失时由 agentctl 自动生成的骨架。请填入现场真实值后重启，
+# 或改用平台下发（安装包 ----PARAMETERS 段的 PARAM_JSON_CONF / 安装时 --jsonConf=）。
+spring:
+  application:
+    name: hkex-cmdb-sync
+
+server:
+  # 插件形态用 18081（docc 形态才是 18080，那个端口在部分机器上被 nginx 占了）
+  port: 18081
+  shutdown: graceful
+
+logging:
+  level:
+    com.cloudwise.cmdb: INFO
+
+servicenow:
+  base-url: ""
+  token-path: /oauth_token.do
+  client-id: ""
+  client-secret: ""
+  username: ""
+  password: ""
+  group-query: group.nameENDSWITH_SUP
+  page-size: 5000
+  connect-timeout: 10000
+  read-timeout: 120000
+  token-refresh-ahead-seconds: 300
+
+douc:
+  base-url: ""
+  gateway-prefix: /douc
+  api-prefix: /api/v1
+  language: zh_CN
+  auth-mode: direct
+  sign-mode: sm3
+  user-id: ""
+  account-id: ""
+  top-account-id: ""
+  parent-group-id: ""
+  default-group-type: 1
+  user-page-size: 500
+  connect-timeout: 10000
+  read-timeout: 60000
+  dry-run: true
+
+xxl:
+  job:
+    admin:
+      address: "\${XXL_JOB_ADMIN_ADDRESS:}"
+    accessToken: "\${XXL_JOB_ACCESS_TOKEN:}"
+    executor:
+      app.name: hkex-cmdb-sync
+      port: 18599
+      log.path: ./logs/jobhandler
+      log.retention.days: 7
+      ip: ""
+
+hkex:
+  sync:
+    scheduled-enabled: true
+    on-startup: true
+    startup-delay-seconds: 30
+    cron: "0 0 3 * * ?"
+    member-sync: true
+
+  heartbeat:
+    enabled: true
+    file: ./heartbeat
+    interval-seconds: 30
+DEFAULT_CONF
+    then
+      echo "fail: unable to write default config to $CONF_FILE"
+      return 1
+    fi
+    chown "$(id -un):$(id -gn)" "$CONF_FILE" 2>/dev/null || true
+    echo "warn: application.yml was missing, wrote skeleton config (credentials empty, service will NOT start until filled)"
+  fi
+}
+
+# ── 启动失败时 tail app log 到 stdout，让 omniagentd / DOCC 平台能直接看到 ──
+# 这是 1.1.21 日志增强：之前只输出 "Check .../app.out.log"，但平台拿不到
+# 那个文件，必须 SSH 到目标机 cat。现在失败时直接 tail 末尾 30 行到 stdout。
+_tail_app_log_on_failure() {
+	# printf 的 format 以 '-' 开头时（'--- xxx ---'），有些 shell 会把它当成选项而报
+	# "printf: --: invalid option"。统一加 `--` 终结符即可（install.sh 的 die() 同款处理）。
+	_dump_log() {
+		[ -f "$1" ] || return 0
+		[ -s "$1" ] || return 0
+		printf -- '--- last 30 lines of %s ---\n' "$1" >&2
+		printf -- '--- last 30 lines of %s ---\n' "$1"
+		tail -n 30 "$1" >&2
+		tail -n 30 "$1"
+		printf -- '--- end ---\n' >&2
+		printf -- '--- end ---\n'
+	}
+	_dump_log "$OUT_LOG"
+	_dump_log "$ERR_LOG"
+}
+
+start() {
+  set +e
+  resolve_runas
+  require_java
+  resolve_app_jar
+  load_common_ini
+  if [ ! -f "$APP_JAR" ]; then
+    echo "fail: jar not found under lib or target"
+    _tail_app_log_on_failure
+    exit 1
+  fi
+  if ! _ensure_config; then
+    _tail_app_log_on_failure
+    exit 1
+  fi
+  if is_running; then
+    echo "Cloudwise hkexcmdbsync is running. Agent pid: $(read_pid)"
+    exit 0
+  fi
+  mkdir -p "$LOG_DIR" "$BASE_DIR/run" "$APP_HOME"
+  # 运行目录归属"当前调用用户"（本进程也以该用户运行），保证能写日志/pid。
+  chown -R "$(id -un):$(id -gn)" "$LOG_DIR" "$BASE_DIR/run" 2>/dev/null || true
+  echo "starting java=${JAVA_BIN} jar=${APP_JAR} lib=${LIB_DIR} (runas=$(id -un))"
+  if is_json_config; then
+    json_config=$(read_json_config)
+    SPRING_APPLICATION_JSON="$json_config" nohup bash -c \
+      'exec -a hkexcmdbsync "$@"' exec-java "$JAVA_BIN" \
+      -Dhkex.app-home="$APP_HOME" \
+      -Dhkex.main-class="$MAIN_CLASS" \
+      -Dhkex.config.path="$CONF_FILE" \
+      -DcwLogRootPath="$LOG_DIR" \
+      -Domniagent.common.ini="$COMMON_INI" \
+      -Domniagent.common.config-server="${COMMON_CONFIG_SERVER:-}" \
+      -Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
+      -Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
+      -Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+      -classpath "$LIB_DIR/*" "$MAIN_CLASS" >>"$OUT_LOG" 2>>"$ERR_LOG" &
+  else
+    nohup bash -c \
+      'exec -a hkexcmdbsync "$@"' exec-java "$JAVA_BIN" \
+      -Dhkex.app-home="$APP_HOME" \
+      -Dhkex.main-class="$MAIN_CLASS" \
+      -Dhkex.config.path="$CONF_FILE" \
+      -DcwLogRootPath="$LOG_DIR" \
+      -Domniagent.common.ini="$COMMON_INI" \
+      -Domniagent.common.config-server="${COMMON_CONFIG_SERVER:-}" \
+      -Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
+      -Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
+      -Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+      -Dspring.config.additional-location="$CONF_FILE" \
+      -classpath "$LIB_DIR/*" "$MAIN_CLASS" >>"$OUT_LOG" 2>>"$ERR_LOG" &
+  fi
+  agent_pid=$!
+  echo "agent_pid=${agent_pid}"
+  echo "$agent_pid" > "$PID_FILE"
+  # $! 是 sudo/nohup 包装进程，不是 java 本体；反查真实 java PID 覆盖之，
+  # 保证后续 stop/status 管理的都是 java 进程本身。
+  real_pid=$(resolve_real_agent_pid || true)
+  if [ -n "$real_pid" ]; then
+    echo "$real_pid" > "$PID_FILE"
+    agent_pid="$real_pid"
+    echo "resolved java pid=${real_pid}"
+  fi
+  if wait_for_start "$agent_pid" && process_matches_app "$agent_pid"; then
+    echo "Cloudwise hkexcmdbsync is running. Agent pid: $agent_pid"
+    exit 0
+  fi
+  # 启动失败：tail app log 让错误更直观
+  echo "fail: agent process exited during startup. Check $OUT_LOG and $ERR_LOG"
+  _tail_app_log_on_failure
+  # 检查是否是配置变更导致的重启（有重启标记文件）
+  _RESTART_FLAG="$BASE_DIR/run/.restart-required"
+  if [ -f "$_RESTART_FLAG" ]; then
+    rm -f "$_RESTART_FLAG"
+    echo "warn: config change detected, restarting agent..."
+    sleep 1
+    exec "$0" start
+  fi
+  rm -f "$PID_FILE"
+  echo "fail: agent process exited during startup. Check $OUT_LOG and $ERR_LOG"
+  exit 1
+}
+
+stop() {
+  resolve_app_jar
+
+  if ! is_running; then
+    # 即便 status 判定"未运行"，也按特征兜底清一次，处理 PID 陈旧/孤儿 java 的情况
+    _pkill_agent || true
+    rm -f "$PID_FILE" 2>/dev/null || true
+    echo "Cloudwise hkexcmdbsync service already stopped."
+    return 0
+  fi
+
+  PID=$(read_pid)
+  echo "hkexcmdbsync stopping..."
+  # 1) 优雅停止：SIGTERM（Spring Boot 会走 graceful shutdown），最多等 30 秒（与 CDC 一致）。
+  #    注：CDC 用的是 SIGQUIT —— 那是 Go 的信号语义（Go 会打印栈后退出）；
+  #    JVM 收到 SIGQUIT 只打印线程转储、不会退出，故这里用 TERM。
+  [ -n "$PID" ] && kill -TERM "$PID" 2>/dev/null || true
+  _n=0
+  while _agent_still_running && [ "$_n" -lt 30 ]; do
+    sleep 1
+    _n=$((_n + 1))
+  done
+
+  # 2) 30s 后仍在：尽力清理（处理陈旧 PID / 孤儿进程 / 无权限等），不强求
+  if _agent_still_running; then
+    _pkill_agent || true
+    if _agent_still_running && command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo -n pkill -9 -f -- "$AGENT_PROC_PATTERN" 2>/dev/null || true
+      [ -n "$PID" ] && sudo -n kill -9 "$PID" 2>/dev/null || true
+    fi
+  fi
+
+  # 3) 与 CDC 一致：仍停不掉 → 只提示、不报失败（善后交给平台/systemd），返回 0。
+  #    之前这里 exit 1，导致平台报 "Stop HKEXCMDBSYNC error ... exit status 1"。
+  if _agent_still_running; then
+    echo "warn: hkexcmdbsync still running after stop attempts (pid ${PID:-unknown}); left to platform"
+    return 0
+  fi
+  rm -f "$PID_FILE" 2>/dev/null || true
+  echo "Cloudwise hkexcmdbsync service stopped success."
+  return 0
+}
+
+restart() {
+  if is_running; then
+    stop || exit 1
+  fi
+  start
+}
+
+info() {
+  agent_pid=0
+  resolve_app_jar
+  load_common_ini
+  if is_running; then
+    agent_pid=$(read_pid)
+  fi
+
+  # 探测命名管道状态（pipe 字段：omniagentd 通过命名管道给插件发熔断/生命周期信号）。
+  # 本插件**没有**实现 IPC 柔性退出，所以这里恒为 false —— 如实上报，不假装支持。
+  # 平台在资源阈值触发时改走「直接操作进程」那条路（见 OmniAgent 插件集成管理规范「熔断/恢复功能」）。
+  PIPE_STATUS=false
+  PIPE_PATH="$REAL_BASE_DIR/run/daemon2hkexcmdbsync"
+  if [ -p "$PIPE_PATH" ]; then
+    PIPE_STATUS=true
+  fi
+
+  echo "{\"pid\":$agent_pid,\"version\":\"$APP_VERSION\",\"agent_id\":\"hkexcmdbsync\",\"config\":\"$CONF_FILE\",\"pipe\":$PIPE_STATUS,\"app_home\":\"$APP_HOME\",\"jar\":\"$APP_JAR\"}"
+}
+
+log() {
+  echo "{\"log_pattern\":[\"$OUT_LOG\",\"$ERR_LOG\"],\"encoding\":\"UTF-8\"}"
+}
+
+command=${1:-}
+
+case "$command" in
+  start) start ;;
+  stop) stop ;;
+  status) status ;;
+  restart) restart ;;
+  info) info ;;
+  log) log ;;
+  *)
+    usage
+    echo "fail: unsupported command"
+    exit 1
+    ;;
+esac

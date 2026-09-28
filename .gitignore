@@ -14,5 +14,12 @@ pid/
 **/application-prod.properties
 # 上面三条按「完整文件名」匹配，所以 application-dev.properties.example 不受影响，可以入库
 
+# OmniAgent 插件形态（packaging/）的现场主配置，同样含真实凭据。
+# 模板见 hkex-cmdb-sync-server/src/main/resources/application.yml.example（可入库）。
+**/src/main/resources/application.yml
+
 # 打包产物
 dist/
+
+# OmniAgent 插件心跳文件（本地跑时落在 CWD）
+heartbeat

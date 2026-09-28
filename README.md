@@ -314,6 +314,31 @@ build-job:
 `PROJECT_LIST` 的写法与 docc 一致。单模块的 `doop-server` 不需要这一段，
 本工程拆成两个模块后要指明制品出自哪个模块。
 
+### OMP 部署
+
+`deploy-omp` 是一个仅手动执行的 GitLab Job，复用 docc 的部署协议：将构建出的
+`hkexCmdbSync-*.tar.gz` 上传到 OMP 的
+`/data/omp/packages/upgrade_packages/`，再执行：
+
+```bash
+bash /data/omp/scripts/deploy upgrade hkexCmdbSync
+```
+
+若升级命令失败，Job 会立即调用 `roll_back hkexCmdbSync` 并以失败结束。部署前在该项目的
+**受保护 CI/CD Variables** 中配置下列变量；敏感值均不进入仓库：
+
+| 变量 | 说明 |
+|---|---|
+| `OMP_HOST` | OMP 服务器地址 |
+| `OMP_PORT` | SSH 端口；未覆盖时为 `22` |
+| `OMP_USER` | SSH 登录用户 |
+| `OMP_SSH_PRIVATE_KEY` | 私钥（建议设为 Masked / Protected） |
+| `OMP_KNOWN_HOSTS` | 目标机的 known_hosts 条目，用于校验主机身份 |
+| `OMP_SERVICE_NAME` | OMP 服务名；默认 `hkexCmdbSync` |
+
+部署 Job 没有使用 `StrictHostKeyChecking=no`，因此必须提供 `OMP_KNOWN_HOSTS`；这避免 CI
+在目标地址或主机密钥被篡改时继续上传制品。
+
 **CI 直接产出可部署的 tar.gz** —— 打包逻辑写在 `hkex-cmdb-sync-server/pom.xml` 的
 `maven-assembly-plugin` 里，流水线只负责 `mvn package`，不需要额外脚本：
 

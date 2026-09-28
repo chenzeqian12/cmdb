@@ -1,6 +1,7 @@
 package com.cloudwise.cmdb.service.impl;
 
 import com.cloudwise.cmdb.config.DoucProperties;
+import com.cloudwise.cmdb.service.GroupSyncStateStore;
 import com.cloudwise.cmdb.common.exception.IntegrationException;
 import com.cloudwise.cmdb.integration.douc.DoucClient;
 import com.cloudwise.cmdb.integration.douc.dto.DoucGroupMember;
@@ -40,6 +41,9 @@ class GroupSyncServiceImplTest {
     @Mock
     private DoucClient doucClient;
 
+    @Mock
+    private GroupSyncStateStore groupSyncStateStore;
+
     private DoucProperties doucProperties;
 
     private GroupSyncServiceImpl service;
@@ -49,7 +53,8 @@ class GroupSyncServiceImplTest {
         doucProperties = new DoucProperties();
         doucProperties.setParentGroupId("1");
         doucProperties.setDryRun(true);
-        service = new GroupSyncServiceImpl(serviceNowClient, doucClient, doucProperties);
+        service = new GroupSyncServiceImpl(serviceNowClient, doucClient, doucProperties,
+                groupSyncStateStore);
     }
 
     private SnGroupMember member(String group, String email) {
@@ -132,6 +137,27 @@ class GroupSyncServiceImplTest {
         Assertions.assertThat(result.getExistingGroups()).containsExactly("GroupA_SUP");
         Mockito.verify(doucClient, Mockito.times(1)).addGroup("GroupB_SUP", "1");
         Mockito.verify(doucClient, Mockito.never()).addGroup("GroupA_SUP", "1");
+    }
+
+    @Test
+    @DisplayName("正式同步时删除上次创建但本次 SN 已不存在的组")
+    void shouldDeletePreviouslyManagedGroupsMissingFromServiceNow() {
+        doucProperties.setDeleteMissingGroups(true);
+        Mockito.when(serviceNowClient.fetchGroupMembers()).thenReturn(List.of(
+                member("GroupA_SUP", "a@example.com"),
+                member("GroupB_SUP", "b@example.com")));
+        Mockito.when(doucClient.listGroupNameToId()).thenReturn(Map.of(
+                "GroupA_SUP", 1L, "GroupB_SUP", 2L, "GroupC_SUP", 3L));
+        Mockito.when(groupSyncStateStore.loadManagedGroups()).thenReturn(Map.of(
+                "GroupA_SUP", 1L, "GroupB_SUP", 2L, "GroupC_SUP", 3L));
+
+        GroupSyncResult result = service.sync(false, false, false);
+
+        Assertions.assertThat(result.getGroupsToDelete()).containsExactly("GroupC_SUP");
+        Assertions.assertThat(result.getDeletedGroups()).containsExactly("GroupC_SUP");
+        Mockito.verify(doucClient).deleteGroup(3L);
+        Mockito.verify(groupSyncStateStore).saveManagedGroups(Map.of(
+                "GroupA_SUP", 1L, "GroupB_SUP", 2L));
     }
 
     @Test
