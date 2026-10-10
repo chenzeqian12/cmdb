@@ -37,6 +37,7 @@ APP_HOME=${APP_HOME:-$APP_HOME_DEFAULT}
 DEFAULT_CONF_FILE="$BASE_DIR/conf/application.yml"
 DEFAULT_COMMON_INI="$BASE_DIR/../../../conf/common.ini"
 COMMON_INI=${COMMON_INI:-$DEFAULT_COMMON_INI}
+NACOS_PARAMS_FILE=${NACOS_PARAMS_FILE:-$BASE_DIR/conf/nacos.params}
 if [ -f "$DEFAULT_CONF_FILE" ]; then
   CONF_FILE=${CONF_FILE:-$DEFAULT_CONF_FILE}
 else
@@ -186,6 +187,26 @@ load_common_ini() {
   COMMON_HOST_IP=$(read_common_ini_value ip)
 }
 
+load_nacos_params() {
+  if [ -f "$NACOS_PARAMS_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$NACOS_PARAMS_FILE"
+  fi
+  NACOS_SERVER=${CW_NACOS_SERVER:-${CER_NACOS_SERVER:-}}
+  NACOS_USERNAME=${CW_NACOS_USERNAME:-${CER_NACOS_USERNAME:-}}
+  NACOS_PASSWORD=${CW_NACOS_PASSWORD:-${CER_NACOS_PASSWORD:-}}
+  NACOS_NAMESPACE=${CW_NACOS_NAMESPACE:-${CER_NACOS_NAMESPACE:-}}
+  NACOS_JVM_OPTS=""
+  if [ -n "$NACOS_SERVER" ]; then
+    if [ -z "$NACOS_USERNAME" ] || [ -z "$NACOS_PASSWORD" ] || [ -z "$NACOS_NAMESPACE" ]; then
+      echo "fail: Nacos bootstrap parameters are incomplete"
+      return 1
+    fi
+    NACOS_JVM_OPTS="-DcwNacosServer=$NACOS_SERVER -DcwNacosUserName=$NACOS_USERNAME"
+    NACOS_JVM_OPTS="$NACOS_JVM_OPTS -DcwNacosPassword=$NACOS_PASSWORD -DcwNacosNamespace=$NACOS_NAMESPACE"
+  fi
+}
+
 is_json_config() {
   [ -f "$CONF_FILE" ] && grep -q '^[[:space:]]*{' "$CONF_FILE" 2>/dev/null
 }
@@ -332,12 +353,9 @@ _ensure_config() {
       echo "fail: unable to create config directory for $CONF_FILE"
       return 1
     fi
-    # 这里只补一个「字段齐全、凭据留空」的骨架。服务缺凭据本来就跑不起来，
-    # 写骨架的目的不是让它能启动，而是让 ConfigValidator 一次列全缺哪些键
-    # （而不是抛一个看不懂的 NPE 或者等到调接口才报 401）。
+    # 只补非敏感运行参数；业务配置必须来自 Nacos 密文，不允许回退到本地明文。
     if ! cat > "$CONF_FILE" <<DEFAULT_CONF
-# 配置缺失时由 agentctl 自动生成的骨架。请填入现场真实值后重启，
-# 或改用平台下发（安装包 ----PARAMETERS 段的 PARAM_JSON_CONF / 安装时 --jsonConf=）。
+# 配置缺失时由 agentctl 自动生成。业务配置由 Nacos 密文经 DOUC 解密后注入。
 spring:
   application:
     name: hkex-cmdb-sync
@@ -351,35 +369,12 @@ logging:
   level:
     com.cloudwise.cmdb: INFO
 
-servicenow:
-  base-url: ""
-  token-path: /oauth_token.do
-  client-id: ""
-  client-secret: ""
-  username: ""
-  password: ""
-  group-query: group.nameENDSWITH_SUP
-  page-size: 5000
-  connect-timeout: 10000
-  read-timeout: 120000
-  token-refresh-ahead-seconds: 300
-
-douc:
-  base-url: ""
-  gateway-prefix: /douc
-  api-prefix: /api/v1
-  language: zh_CN
-  auth-mode: direct
-  sign-mode: sm3
-  user-id: ""
-  account-id: ""
-  top-account-id: ""
-  parent-group-id: ""
-  default-group-type: 1
-  user-page-size: 500
-  connect-timeout: 10000
-  read-timeout: 60000
-  dry-run: true
+cmdb:
+  remote-config:
+    enabled: true
+    group: hkex-cmdb-sync
+    data-id: hkex-cmdb-sync-config.json
+    timeout-ms: 3000
 
 xxl:
   job:
@@ -411,7 +406,7 @@ DEFAULT_CONF
       return 1
     fi
     chown "$(id -un):$(id -gn)" "$CONF_FILE" 2>/dev/null || true
-    echo "warn: application.yml was missing, wrote skeleton config (credentials empty, service will NOT start until filled)"
+    echo "warn: application.yml was missing, wrote non-sensitive runtime configuration"
   fi
 }
 
@@ -441,6 +436,7 @@ start() {
   require_java
   resolve_app_jar
   load_common_ini
+  load_nacos_params || exit 1
   if [ ! -f "$APP_JAR" ]; then
     echo "fail: jar not found under lib or target"
     _tail_app_log_on_failure
@@ -471,6 +467,7 @@ start() {
       -Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
       -Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
       -Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+      $NACOS_JVM_OPTS \
       -classpath "$LIB_DIR/*" "$MAIN_CLASS" >>"$OUT_LOG" 2>>"$ERR_LOG" &
   else
     nohup bash -c \
@@ -484,6 +481,7 @@ start() {
       -Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
       -Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
       -Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+      $NACOS_JVM_OPTS \
       -Dspring.config.additional-location="$CONF_FILE" \
       -classpath "$LIB_DIR/*" "$MAIN_CLASS" >>"$OUT_LOG" 2>>"$ERR_LOG" &
   fi

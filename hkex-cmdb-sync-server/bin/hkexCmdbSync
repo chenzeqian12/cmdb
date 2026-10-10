@@ -17,6 +17,12 @@
 
 CURRENT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 THIS_SCRIPT="$CURRENT_DIR/$(basename "$0")"
+PACKAGE_HOME=$(cd "${CURRENT_DIR}/.." &>/dev/null && pwd)
+
+# OMP 安装脚本生成的运行参数。文件只包含目录、端口、运行用户和内存，权限 0600。
+# 非 OMP 部署没有该文件，继续走下方原有的 CW_* 占位符逻辑。
+OMP_ENV_FILE="${PACKAGE_HOME}/conf/omp.env"
+test -f "${OMP_ENV_FILE}" && . "${OMP_ENV_FILE}"
 
 ######### 服务名 主类
 # 各服务独自维护 #
@@ -44,7 +50,15 @@ INNER_DATA_DIR="${CW_INSTALL_DATA_DIR}"
 INNER_SERVICE_PORT="${CW_SERVICE_PORT}"
 INNER_METRICS_PORT="${CW_METRICS_PORT}"
 INNER_XXLJOBEXE_PORT="${CW_XXLJOBEXE_PORT}"
+INNER_NACOS_SERVER="${CW_NACOS_SERVER}"
+INNER_NACOS_USERNAME="${CW_NACOS_USERNAME}"
+INNER_NACOS_PASSWORD="${CW_NACOS_PASSWORD}"
+INNER_NACOS_NAMESPACE="${CW_NACOS_NAMESPACE}"
 ######### END
+
+# OMP 使用服务包的实际安装目录，不依赖旧部署器替换 CW_INSTALL_* 占位符。
+[ -n "${OMP_RUN_USER:-}" ] && INNER_RUN_USER="${OMP_RUN_USER}"
+[ -n "${OMP_SERVICE_PORT:-}" ] && INNER_SERVICE_PORT="${OMP_SERVICE_PORT}"
 
 ######### 参数解析：-l 本地模式，-f 前台
 LOCAL_MODE=0
@@ -60,8 +74,8 @@ done
 ######### END
 
 ######### 服务目录 通过内部变量自动解析
-APP_HOME="${INNER_APP_DIR}/${APP_NAME}"
-APP_LOG_DIR="${INNER_LOG_DIR}/${APP_NAME}"
+APP_HOME="${OMP_APP_HOME:-${INNER_APP_DIR}/${APP_NAME}}"
+APP_LOG_DIR="${OMP_LOG_DIR:-${INNER_LOG_DIR}/${APP_NAME}}"
 APP_PID_FILE="${APP_HOME}/${APP_NAME}.pid"
 APP_CONF_DIR="${APP_HOME}/conf"
 #########
@@ -69,6 +83,7 @@ APP_CONF_DIR="${APP_HOME}/conf"
 ######### 读取部署环境变量（部署工具生成，位于服务安装目录下）
 test -f /etc/profile && . /etc/profile
 test -f "${INNER_APP_DIR}/bash_profile" && . "${INNER_APP_DIR}/bash_profile"
+source "${CURRENT_DIR}/java17.sh"
 ######### END
 
 ######### 本地模式：以脚本上级目录为服务目录，无需任何 CW_* 环境变量
@@ -83,21 +98,19 @@ fi
 if [ -z "${SPRING_PROFILE}" ]; then
     if [ "${LOCAL_MODE}" -eq 1 ]; then SPRING_PROFILE="dev"; else SPRING_PROFILE="prod"; fi
 fi
+
+# Nacos 启动参数来自 OMP 依赖通道或受控生成的 conf/nacos.params。
+# 这里传递的是平台密文，明文只在 JVM 内由 cwop-commons 解开。
+NACOS_PARAMS_FILE="${APP_CONF_DIR}/nacos.params"
+test -f "${NACOS_PARAMS_FILE}" && . "${NACOS_PARAMS_FILE}"
+NACOS_SERVER="${CW_NACOS_SERVER:-${INNER_NACOS_SERVER:-${CER_NACOS_SERVER:-}}}"
+NACOS_USERNAME="${CW_NACOS_USERNAME:-${INNER_NACOS_USERNAME:-${CER_NACOS_USERNAME:-}}}"
+NACOS_PASSWORD="${CW_NACOS_PASSWORD:-${INNER_NACOS_PASSWORD:-${CER_NACOS_PASSWORD:-}}}"
+NACOS_NAMESPACE="${CW_NACOS_NAMESPACE:-${INNER_NACOS_NAMESPACE:-${CER_NACOS_NAMESPACE:-}}}"
 ######### END
 
 ######### Java 命令检查
-if [ -n "${JAVA_HOME}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
-    JAVACMD="${JAVA_HOME}/bin/java"
-else
-    JAVACMD="java"
-    which java >/dev/null 2>&1 || echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH."
-fi
-
-JAVA_MAJOR_VERSION=$("${JAVACMD}" -version 2>&1 | sed -E -n 's/.* version "([0-9]*).*$/\1/p')
-if [ -z "${JAVA_MAJOR_VERSION}" ] || [ "${JAVA_MAJOR_VERSION}" -lt 17 ]; then
-    echo "Current Java Version: ${JAVA_MAJOR_VERSION}, Must be upgraded to JDK 17 or above."
-    exit 1
-fi
+JAVACMD=$(resolve_java17)
 ######### END
 
 ######### CLASSPATH：conf 排在 lib 之前，所以 conf 里的配置优先于 jar 内的同名资源
@@ -133,12 +146,23 @@ JVM_OPTS="
 # 堆大小：部署时由 ${CW_JVM_HEAP_SIZE} 占位符注入（部署工具会替换成如 2g）。
 # 未经部署工具替换时该变量为空，直接拼进命令行会变成裸的 -Xms 导致 JVM 起不来，
 # 所以为空时整段不加，交给 JVM 默认值。
-HEAP_SIZE="${ENV_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MIN}}"
+HEAP_SIZE="${ENV_JVM_HEAP_SIZE:-${OMP_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MIN}}}"
 if [ -n "${HEAP_SIZE}" ]; then
-    JVM_OPTS="${JVM_OPTS} -Xms${HEAP_SIZE} -Xmx${INNER_JVM_HEAP_SIZE_MAX:-${HEAP_SIZE}}"
+    JVM_OPTS="${JVM_OPTS} -Xms${HEAP_SIZE} -Xmx${OMP_JVM_HEAP_SIZE:-${INNER_JVM_HEAP_SIZE_MAX:-${HEAP_SIZE}}}"
 fi
+[ -n "${INNER_SERVICE_PORT}" ]   && JVM_OPTS="${JVM_OPTS} -Dserver.port=${INNER_SERVICE_PORT}"
 [ -n "${INNER_METRICS_PORT}" ]    && JVM_OPTS="${JVM_OPTS} -DcwMetricsPort=${INNER_METRICS_PORT}"
 [ -n "${INNER_XXLJOBEXE_PORT}" ]  && JVM_OPTS="${JVM_OPTS} -DcwXxlJobExecutorPort=${INNER_XXLJOBEXE_PORT}"
+if [ -n "${NACOS_SERVER}" ]; then
+    if [ -z "${NACOS_USERNAME}" ] || [ -z "${NACOS_PASSWORD}" ] || [ -z "${NACOS_NAMESPACE}" ]; then
+        echo "Nacos bootstrap parameters are incomplete"
+        exit 1
+    fi
+    JVM_OPTS="${JVM_OPTS} -DcwNacosServer=${NACOS_SERVER}"
+    JVM_OPTS="${JVM_OPTS} -DcwNacosUserName=${NACOS_USERNAME}"
+    JVM_OPTS="${JVM_OPTS} -DcwNacosPassword=${NACOS_PASSWORD}"
+    JVM_OPTS="${JVM_OPTS} -DcwNacosNamespace=${NACOS_NAMESPACE}"
+fi
 ######### END
 
 ######### 服务状态检查
@@ -197,8 +221,11 @@ start() {
         id "${INNER_RUN_USER}" &>/dev/null || useradd "${INNER_RUN_USER}"
         chown -R "${INNER_RUN_USER}" "${APP_HOME}" &>/dev/null
         chown -R "${INNER_RUN_USER}" "${APP_LOG_DIR}" &>/dev/null
-        # 切用户后重跑本脚本，把前台标记一并带过去
-        su "${INNER_RUN_USER}" -c "${THIS_SCRIPT} start_inside ${FOREGROUND:+-f}"
+        # 切用户后重跑本脚本；只有明确使用 -f 时才传前台标记。
+        foreground_arg=""
+        [ "${FOREGROUND}" -eq 1 ] && foreground_arg=" -f"
+        su -m "${INNER_RUN_USER}" -s /bin/bash \
+            -c "\"${THIS_SCRIPT}\" start_inside${foreground_arg}"
     else
         start_inside
     fi

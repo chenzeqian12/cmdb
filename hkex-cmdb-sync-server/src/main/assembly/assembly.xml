@@ -7,7 +7,8 @@
 
         hkexCmdbSync/
         ├── bin/hkexCmdbSync      启停脚本（conf 挂 classpath）
-        ├── conf/                 配置，改完重启生效，不用重新打包
+        ├── conf/                 非敏感运行配置
+        ├── docs/                 部署与配置发布说明
         ├── lib/                  主 jar + 全部 runtime 依赖
         ├── logs/  pid/           运行时生成
         └── README.md
@@ -30,17 +31,27 @@
             <fileMode>644</fileMode>
         </fileSet>
 
+        <fileSet>
+            <directory>${project.basedir}/../docs</directory>
+            <outputDirectory>docs</outputDirectory>
+            <includes>
+                <include>CMDB Nacos DOUC 配置部署指南.md</include>
+                <include>CMDB OMP 应用商店部署说明.md</include>
+            </includes>
+            <fileMode>644</fileMode>
+        </fileSet>
+
         <!--
-          配置：只带真实配置，.example 模板不带。
+          配置：只带非敏感运行配置，.example 模板不带。
           刻意不开 filtered —— 这些 properties 里的 ${XXX:} 是留给 Spring 解析的占位符，
           开了 Maven 过滤会被当成 Maven 属性处理掉。
         -->
         <fileSet>
             <directory>conf</directory>
             <outputDirectory>conf</outputDirectory>
-            <excludes>
-                <exclude>*.example</exclude>
-            </excludes>
+            <includes>
+                <include>application.properties</include>
+            </includes>
             <fileMode>644</fileMode>
             <directoryMode>755</directoryMode>
         </fileSet>

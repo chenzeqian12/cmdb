@@ -5,6 +5,7 @@ JAVA_HOME=${JAVA_HOME:-}
 JAVA_BIN=${JAVA_BIN:-}
 CONF_FILE=${CONF_FILE:-}
 COMMON_INI=${COMMON_INI:-$BASE_DIR/../../../../conf/common.ini}
+NACOS_PARAMS_FILE=${NACOS_PARAMS_FILE:-$BASE_DIR/conf/nacos.params}
 # 主类：本工程是 docc 同款 thin jar（MANIFEST 无 Main-Class），
 # 所以启动方式是 `-classpath 'lib/*' <主类>`，不能像 GCP 的 event-agent 那样用 `-jar`。
 MAIN_CLASS="com.cloudwise.cmdb.CmdbSyncApplication"
@@ -94,6 +95,24 @@ COMMON_DATA_SERVER=$(read_common_ini_value data_server)
 COMMON_FILE_SERVER=$(read_common_ini_value file_server)
 COMMON_HOST_IP=$(read_common_ini_value ip)
 
+if [ -f "$NACOS_PARAMS_FILE" ]; then
+	# shellcheck disable=SC1090
+	. "$NACOS_PARAMS_FILE"
+fi
+NACOS_SERVER=${CW_NACOS_SERVER:-${CER_NACOS_SERVER:-}}
+NACOS_USERNAME=${CW_NACOS_USERNAME:-${CER_NACOS_USERNAME:-}}
+NACOS_PASSWORD=${CW_NACOS_PASSWORD:-${CER_NACOS_PASSWORD:-}}
+NACOS_NAMESPACE=${CW_NACOS_NAMESPACE:-${CER_NACOS_NAMESPACE:-}}
+NACOS_JVM_OPTS=""
+if [ -n "$NACOS_SERVER" ]; then
+	if [ -z "$NACOS_USERNAME" ] || [ -z "$NACOS_PASSWORD" ] || [ -z "$NACOS_NAMESPACE" ]; then
+		echo "fail: Nacos bootstrap parameters are incomplete" >&2
+		exit 1
+	fi
+	NACOS_JVM_OPTS="-DcwNacosServer=$NACOS_SERVER -DcwNacosUserName=$NACOS_USERNAME"
+	NACOS_JVM_OPTS="$NACOS_JVM_OPTS -DcwNacosPassword=$NACOS_PASSWORD -DcwNacosNamespace=$NACOS_NAMESPACE"
+fi
+
 if [ -n "$CONF_FILE" ]; then
 	if is_json_config; then
 		SPRING_APPLICATION_JSON=$(read_json_config)
@@ -111,6 +130,7 @@ if [ -n "$CONF_FILE" ]; then
 			-Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
 			-Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
 			-Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+			$NACOS_JVM_OPTS \
 			-classpath "$LIB_DIR/*" "$MAIN_CLASS"
 	fi
 
@@ -127,6 +147,7 @@ if [ -n "$CONF_FILE" ]; then
 		-Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
 		-Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
 		-Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+		$NACOS_JVM_OPTS \
 		-Dspring.config.additional-location="$CONF_FILE" \
 		-classpath "$LIB_DIR/*" "$MAIN_CLASS"
 fi
@@ -143,4 +164,5 @@ exec env \
 	-Domniagent.common.data-server="${COMMON_DATA_SERVER:-}" \
 	-Domniagent.common.file-server="${COMMON_FILE_SERVER:-}" \
 	-Domniagent.common.ip="${COMMON_HOST_IP:-}" \
+	$NACOS_JVM_OPTS \
 	-classpath "$LIB_DIR/*" "$MAIN_CLASS"

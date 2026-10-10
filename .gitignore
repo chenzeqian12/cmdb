@@ -7,15 +7,14 @@ pid/
 .vscode/
 .DS_Store
 
-# 真实凭据文件，绝不入库。
+# 历史本地 profile 文件继续忽略；新方案不允许在其中保存真实凭据。
 # 注意用 **/ 前缀：带斜杠的模式锚定在仓库根，而该文件在子模块下，不加 **/ 匹配不到。
 **/application-local.properties
 **/application-dev.properties
 **/application-prod.properties
 # 上面三条按「完整文件名」匹配，所以 application-dev.properties.example 不受影响，可以入库
 
-# OmniAgent 插件形态（packaging/）的现场主配置，同样含真实凭据。
-# 模板见 hkex-cmdb-sync-server/src/main/resources/application.yml.example（可入库）。
+# OmniAgent 插件形态的现场主配置只保留非敏感运行参数，仍由现场独立维护。
 **/src/main/resources/application.yml
 
 # 打包产物

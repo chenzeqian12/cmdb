@@ -1,0 +1,57 @@
+kind: service
+name: hkexCmdbSync
+version: "@CMDB_VERSION@"
+product:
+  # 独立产品归属；上传服务包前必须先在 OMP 登记同名产品及对应版本。
+  name: "@OMP_PRODUCT_NAME@"
+  version: "@OMP_PRODUCT_VERSION@"
+auto_launch: true
+base_env: false
+lang: java
+ports:
+  - name: CMDB 同步服务端口
+    protocol: TCP
+    key: service_port
+    default: 18081
+    editable: false
+monitor:
+  process_name: CmdbSyncApplication
+  metric_port: "{service_port}"
+  health: "{service_port}"
+  type: JavaSpringBoot
+level: 0
+affinity:
+dependencies:
+  - name: jdk17
+    version: 17.0.0
+  - name: nacos
+    version: 2.5.1
+resources:
+install:
+  - name: 安装目录
+    key: base_dir
+    default: "{data_path}/app/hkexCmdbSync"
+    editable: false
+  - name: 日志目录
+    key: log_dir
+    default: "{data_path}/logs/hkexCmdbSync"
+    editable: true
+  - name: 启动内存
+    key: memory
+    default: "512m"
+    editable: true
+  - name: 安装用户
+    key: run_user
+    default: commonuser
+    editable: true
+control:
+  start: "./bin/hkexCmdbSync start"
+  stop: "./bin/hkexCmdbSync stop"
+  restart: "./bin/hkexCmdbSync restart"
+  reload:
+  install: "./scripts/install.py"
+  init:
+  upgrade: "./scripts/upgrade.py"
+  rollback: "./scripts/rollback.py"
+post_action:
+deploy:

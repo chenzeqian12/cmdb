@@ -116,25 +116,23 @@ ServiceNow                          hkex-cmdb-sync                      DOUC
 ## 快速开始
 
 ```bash
-# 1. 准备凭据（已 gitignore，不会入库）
-cp hkex-cmdb-sync-server/conf/application-dev.properties.example \
-   hkex-cmdb-sync-server/conf/application-dev.properties
-# 填入 SN OAuth 凭据与 DOUC 连接信息
-
-# 2. 单元测试（不触网）
+# 1. 单元测试（不触网）
 mvn test
 
-# 3. dryRun 全链路联调：打印完整同步计划，不写任何数据
+# 2. dryRun 全链路联调：打印完整同步计划，不写任何数据
 mvn test -Dtest=GroupSyncIntegrationTest -Dit.enabled=true \
          -Dsurefire.failIfNoSpecifiedTests=false
 
-# 4. 小样本端到端（会写 DOUC，跑完自动清理）
+# 3. 小样本端到端（会写 DOUC，跑完自动清理）
 mvn test -Dtest=SmallSampleSyncIntegrationTest -Dit.enabled=true \
          -Dsurefire.failIfNoSpecifiedTests=false
 
-# 5. 打部署包（见下节「打包与部署」）
+# 4. 打部署包（见下节「打包与部署」）
 mvn clean package
 ```
+
+ServiceNow 和 DOUC 业务接入配置不再放在本地文件中，而是经 DOUC 加密后保存到 Nacos。
+部署及配置发布步骤见 [CMDB Nacos DOUC 配置部署指南](docs/CMDB%20Nacos%20DOUC%20配置部署指南.md)。
 
 > `-Dsurefire.failIfNoSpecifiedTests=false` 是必需的：`hkex-cmdb-sync-common` 模块没有测试，
 > 不加这个参数 Maven 会在该模块上报 `No tests matching pattern ... were executed!` 而中断。
@@ -159,10 +157,10 @@ hkexCmdbSync-1.0.0-20260916183515-89405c43.tar.gz
 ```
 hkexCmdbSync/
 ├── bin/hkexCmdbSync           启停脚本
-├── conf/                      配置（改完重启生效，不用重新打包）
-│   ├── application.properties       公共配置，与环境无关
-│   ├── application-dev.properties   hkexdev 现场环境
-│   └── application-prod.properties  生产（模板见 .example）
+├── bin/publishCmdbConfig      DOUC 加密并发布 Nacos 的受控工具
+├── conf/
+│   ├── application.properties       非敏感运行配置
+│   └── nacos.params                 OMP 依赖通道生成，权限 0600，不进包
 ├── lib/                       主 jar + 57 个 runtime 依赖
 ├── logs/  pid/                运行时生成
 └── README.md
@@ -185,19 +183,17 @@ SPRING_PROFILE=dev ./bin/hkexCmdbSync start    # 指定环境，默认 prod
 > `-l`（local）模式以脚本上级目录为服务目录，不需要任何 `CW_*` 部署环境变量，解压即用。
 > 不带 `-l` 时按 Cloudwise 部署工具安装的路径运行（`${CW_INSTALL_APP_DIR}` 等占位符由部署工具替换）。
 
-### 配置为什么放在包外的 conf/
+### 配置放在哪里
 
-这是 docc / doop-server 的既有约定，`bin/hkexCmdbSync` 把 `conf/` 挂到 classpath 上（**排在 `lib/` 之前**），
-所以 `conf/` 里的配置优先于 jar 内的同名资源：
+`bin/hkexCmdbSync` 把 `conf/` 挂到 classpath 上（**排在 `lib/` 之前**）。配置分为两类：
 
-| 好处 | 说明 |
+| 配置 | 存放位置 |
 |---|---|
-| 换环境不用重新打包 | 改 `conf/application-{profile}.properties` 重启即可 |
-| 凭据不进 jar | jar 里没有任何环境信息，制品可以放心流转 |
-| 与现有部署流程一致 | 运维不用为这个服务学新东西 |
+| 端口、日志、调度、心跳等非敏感运行配置 | `conf/application.properties` |
+| ServiceNow 与 DOUC 业务接入配置 | Nacos 密文，启动时经 DOUC 解密 |
+| Nacos 连接参数 | OMP 依赖通道生成的 `conf/nacos.params`，权限 0600 |
 
-环境由启动脚本的 `SPRING_PROFILE` 选择（`-Dspring.profiles.active=${SPRING_PROFILE}`），
-本地 `-l` 模式默认 `dev`，否则默认 `prod`。
+服务不会从本地 `application-dev.properties` 或 `application-prod.properties` 回退读取业务凭据。
 
 **已实测验证（2026-09-16）**：解压 → `./bin/hkexCmdbSync start -l` → 启动自检通过、
 Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进程。
@@ -207,18 +203,18 @@ Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进�
 
 ### 换环境要改什么
 
-只改 `conf/application-{profile}.properties`，不用重新打包：
+换环境时重新发布一份完整的 Nacos 密文配置，再重启服务：
 
 | 配置 | dev（当前值） | 生产 |
 |---|---|---|
-| `servicenow.*` | HKEX UAT OAuth 账号 | 生产 SN 凭据 |
-| `douc.base-url` | `http://10.106.3.75:18241` | 生产 DOUC 地址 |
-| `douc.auth-mode` | `direct`（无认证直连） | `apim`（走网关正式鉴权） |
-| `douc.account-id` / `top-account-id` | `110` | 生产租户号 |
-| `douc.user-id` | `1`（代码默认值） | **必须实测复核**，见下 |
-| `douc.dry-run` | `true` | 确认计划无误后再改 `false` |
+| `servicenow.*` | 环境对应的 ServiceNow 接入配置 |
+| `douc.base-url` | 环境对应的 DOUC 地址 |
+| `douc.auth-mode` | 按环境选择 `direct` 或 `apim` |
+| `douc.account-id` / `top-account-id` | 环境对应的租户号 |
+| `douc.user-id` | **必须实测复核**，见下 |
+| `douc.dry-run` | 首次发布保持 `true`，确认计划无误后再改 `false` |
 
-生产那份照 `conf/application-prod.properties.example` 复制填写，里面已把要确认的四件事列在文件头。
+具体发布步骤见部署指南。Nacos 只保存 DOUC 密文信封，不保存上述字段的明文。
 
 > **`douc.user-id` 默认是 `1`** —— 实测 dev 上 `1` 能看到全部用户，`3` 返回 0 条。
 > 它决定 `/user/list` 的可见范围，**填错不会报错**，只会让匹配率静默归零。
@@ -316,6 +312,20 @@ build-job:
 
 ### OMP 部署
 
+OMP 应用商店使用单独的标准服务包，不直接上传 Maven assembly 产物：
+
+```bash
+./omp-package.sh
+```
+
+产物位于 `dist/omp/hkexCmdbSync-<版本>.tar.gz`。服务归属为独立产品
+`hkexCmdbSync`，不复用 `docc`、`douc` 等现有产品。上传前必须先在 OMP 中登记
+该产品及对应版本，否则平台会报“归属的产品包在数据库中不存在”。
+
+详细步骤见 [CMDB OMP 应用商店部署说明](docs/CMDB%20OMP%20应用商店部署说明.md)。
+
+以下 `deploy-omp` 流程是原有命令行升级通道，不等同于应用商店服务包上传：
+
 `deploy-omp` 是一个仅手动执行的 GitLab Job，复用 docc 的部署协议：将构建出的
 `hkexCmdbSync-*.tar.gz` 上传到 OMP 的
 `/data/omp/packages/upgrade_packages/`，再执行：
@@ -352,12 +362,10 @@ mvn package
 
 ### 配置与流水线的关系
 
-`conf/application-{dev,prod}.properties` **已 gitignore**，所以：
-
 | 构建来源 | 包内 conf/ | 说明 |
 |---|---|---|
-| 本地 `mvn package` | 有 dev 配置 | 现场测试包，解压可直接跑 |
-| CI `build-job` | 只有 `application.properties` | 生产凭据不应进仓库，部署时由运维在目标机补 `application-prod.properties` |
+| 本地 `mvn package` | 只有非敏感运行配置 | 业务配置从 Nacos 密文加载 |
+| CI `build-job` | 只有非敏感运行配置 | `nacos.params` 由 OMP 依赖通道生成，不进入制品 |
 
 ### 上线前工程侧还缺什么
 
@@ -502,11 +510,17 @@ location: /douc/api/v1/sso/source/proxy.html?restapi=/gateway/checkLogin&service
 
 ### 切换方式
 
-```properties
-douc.auth-mode=apim
-douc.app-key=<APIM 控制台创建应用后获取>
-douc.app-secret=<同上>
-douc.sign-mode=sm3
+在待加密发布的 `cmdb-config.json` 中设置，而不是写入本地 properties：
+
+```json
+{
+  "douc": {
+    "auth-mode": "apim",
+    "app-key": "<APIM 控制台创建应用后获取>",
+    "app-secret": "<同上>",
+    "sign-mode": "sm3"
+  }
+}
 ```
 
 配置了 `apim` 但不给 appKey/appSecret 会**启动即失败**，不会等到第一次请求才 401。
@@ -662,10 +676,10 @@ hkex-cmdb-sync/
 │
 └── hkex-cmdb-sync-server/               主服务
     ├── bin/hkexCmdbSync                 启停脚本（conf 挂 classpath，含 -l 本地模式）
+    ├── bin/publishCmdbConfig            DOUC 加密并发布 Nacos 的受控工具
     ├── conf/                            配置目录，随包发布，不进 jar
-    │   ├── application.properties             公共配置（可入库）
-    │   ├── application-dev.properties         hkexdev 现场环境（含凭据，已 gitignore）
-    │   └── application-prod.properties.example 生产模板
+    │   ├── application.properties             非敏感运行配置（可入库）
+    │   └── nacos.params                       OMP 运行时生成，权限 0600，不进包
     ├── src/main/assembly/assembly.xml   打包描述：bin/conf/lib → tar.gz
     └── src/main/java/com/cloudwise/cmdb/
         ├── CmdbSyncApplication.java     启动类

@@ -1,7 +1,7 @@
 # OmniAgent 插件形态打包
 
-把 `hkex-cmdb-sync` 打成 **OmniAgent 插件包**，形态与 EventAgent(GCP) / CDC 一致：
-上传到平台即装即用，配置走 `conf/application.yml`（**单文件 YAML，不再分 profile**）。
+把 `hkex-cmdb-sync` 打成 **OmniAgent 插件包**，形态与 EventAgent(GCP) / CDC 一致。
+`conf/application.yml` 只保存非敏感运行配置；ServiceNow 和 DOUC 业务接入配置保存在 Nacos 密文中。
 
 和仓库里原有的 docc 形态（`bin/hkexCmdbSync` + `conf/*.properties` + XXL-Job）**并存**，互不影响。
 
@@ -54,7 +54,7 @@ dist/Cloudwise-hkexcmdbsync-installer-Linux-x86_64-1.0.0.sh   # 上传平台 / �
 | 位置 | 内容 |
 |---|---|
 | `----DEFAULT-CONFIG-START----` 段 | 配置全文，平台拿它建配置中心记录 |
-| `----PARAMETERS` 段的 `PARAM_JSON_CONF` | 配置全文，安装时落到 `conf/application.yml` |
+| `----PARAMETERS` 段的 `PARAM_JSON_CONF` | 非敏感运行配置，安装时落到 `conf/application.yml` |
 
 **塞多行 YAML 进去，平台直接报「语法错误」，包根本导不进来。**（1.0.1 就是这么被打回的。）
 
@@ -65,6 +65,7 @@ dist/Cloudwise-hkexcmdbsync-installer-Linux-x86_64-1.0.0.sh   # 上传平台 / �
 - 落地文件依旧叫 `conf/application.yml` —— JSON 是 YAML 的子集，Spring 照读不误
 
 运维拿着 `conf/application.yml` 想改成 YAML 格式也完全可以，Spring 两种都收。
+但 `servicenow.*` 和 `douc.*` 不得写进该文件，必须按部署指南发布为 Nacos 密文。
 
 ---
 
@@ -117,12 +118,12 @@ agent/hkexcmdbsync/
 
 降级会被拒绝（除非 `--allow-downgrade`）。
 
-### ⚠️ 升级会把配置整个换掉
+### ⚠️ 升级会把本地运行配置整个换掉
 
 `conf/application.yml` 由包内/平台下发的配置**整体覆盖**，现场在服务器上手改的内容**会丢**。
 
 `MERGE_STRATEGY=union` 也救不了 —— 它只做**顶层 key** 的浅合并，
-而 `douc.dry-run`、`hkex.sync.cron` 这些都是嵌套的值，合不了。
+而 `hkex.sync.cron` 这类嵌套值合不了。`douc.*` 已迁移到 Nacos 密文，不在该文件中。
 
 **所以：要改配置去平台上改，别在服务器上改 `conf/application.yml`。** 平台的配置才是权威来源。
 
@@ -151,13 +152,17 @@ cat heartbeat                                       # 应是一个 10 位时间�
 
 ## 四、改配置
 
-改 `conf/application.yml` 后重启即可（不用重新打包）。重点项：
+端口、日志、心跳、调度等非敏感配置可修改 `conf/application.yml`。ServiceNow 与 DOUC 配置必须使用
+`bin/publishCmdbConfig` 加密发布到 Nacos，再重启服务。完整步骤见
+[`docs/CMDB Nacos DOUC 配置部署指南.md`](../docs/CMDB%20Nacos%20DOUC%20配置部署指南.md)。
+
+重点项：
 
 | 配置 | 说明 |
 |---|---|
-| `douc.user-id` | **填错不报错，只会让匹配率静默归零**。上线前用只读接口实测 |
-| `douc.account-id` | 填错会写到别人租户下 |
-| `douc.dry-run` | `true` 只算差异不写数据，确认无误再改 `false` |
+| `douc.user-id` | 位于 Nacos 密文中；填错不报错，只会让匹配率静默归零 |
+| `douc.account-id` | 位于 Nacos 密文中；填错会写到别人租户下 |
+| `douc.dry-run` | 位于 Nacos 密文中；首次保持 `true`，确认无误再改 `false` |
 | `hkex.sync.scheduled-enabled` | 自动同步总开关，`false` = 下面两个触发都不生效 |
 | **`hkex.sync.on-startup`** | **服务每次启动后跑一次同步**，默认 `true` |
 | `hkex.sync.startup-delay-seconds` | 启动后等几秒再跑，默认 `30`，**别设 0** |
@@ -200,7 +205,7 @@ cron: "0 0 3 * * MON"          # 只要每周一
 1. **thin jar**：主 jar 的 MANIFEST 里没有 `Main-Class`，启动走 `-classpath 'lib/*' <主类>`，
    所以 `lib/` 里的依赖 jar 必须一起发。`package.sh` 会从同一次构建产出的 docc 形态 tar 里取依赖，两边依赖集合天然一致。
 2. **不实现 IPC 命名管道**：`agentctl info` 的 `pipe` 恒为 `false`。平台熔断时会走「直接操作进程」那条路。
-3. **包内有明文凭据**：`conf/application.yml` 由 `PARAM_JSON_CONF` 落盘，而 `.sh` 就是 tar，`tar -xzf` 能取出。
-   含真实凭据的包只应交付给对应环境。
+3. **包内不含业务凭据**：`conf/application.yml` 只允许非敏感运行配置。启动前必须由受控通道准备
+   `conf/nacos.params`，并提前向 Nacos 发布 DOUC 密文配置。
 4. **docc 形态默认关掉了进程内定时器**：`conf/application.properties` 里 `hkex.sync.scheduled-enabled=false`，
    那个形态由 XXL-Job 调度，两个都开会把同一份同步跑两遍。

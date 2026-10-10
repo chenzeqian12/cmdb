@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: $0 <plaintext-json-file>" >&2
+    exit 2
+fi
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SERVICE_DIR=$(CDPATH= cd -- "${BIN_DIR}/.." && pwd)
+PARAMS_FILE="${SERVICE_DIR}/conf/nacos.params"
+DEPLOY_ROOT=$(dirname "$SERVICE_DIR")
+
+if [ -f "${DEPLOY_ROOT}/bash_profile" ]; then
+    set +u
+    # shellcheck disable=SC1090
+    . "${DEPLOY_ROOT}/bash_profile"
+    set -u
+fi
+# shellcheck disable=SC1090
+source "${BIN_DIR}/java17.sh"
+
+if [ ! -f "${PARAMS_FILE}" ]; then
+    echo "missing ${PARAMS_FILE}" >&2
+    exit 3
+fi
+
+# shellcheck disable=SC1090
+source "${PARAMS_FILE}"
+NACOS_SERVER="${CW_NACOS_SERVER:-${CER_NACOS_SERVER:-}}"
+NACOS_USERNAME="${CW_NACOS_USERNAME:-${CER_NACOS_USERNAME:-}}"
+NACOS_PASSWORD="${CW_NACOS_PASSWORD:-${CER_NACOS_PASSWORD:-}}"
+NACOS_NAMESPACE="${CW_NACOS_NAMESPACE:-${CER_NACOS_NAMESPACE:-}}"
+
+if [ -z "${NACOS_SERVER}" ] || [ -z "${NACOS_USERNAME}" ] \
+        || [ -z "${NACOS_PASSWORD}" ] || [ -z "${NACOS_NAMESPACE}" ]; then
+    echo "Nacos bootstrap parameters are incomplete" >&2
+    exit 3
+fi
+
+cd "${SERVICE_DIR}"
+JAVACMD=$(resolve_java17)
+exec "${JAVACMD}" \
+    -DcwNacosServer="${NACOS_SERVER}" \
+    -DcwNacosUserName="${NACOS_USERNAME}" \
+    -DcwNacosPassword="${NACOS_PASSWORD}" \
+    -DcwNacosNamespace="${NACOS_NAMESPACE}" \
+    -classpath "${SERVICE_DIR}/lib/*" \
+    com.cloudwise.cmdb.config.remote.CmdbConfigPublisher "$1"

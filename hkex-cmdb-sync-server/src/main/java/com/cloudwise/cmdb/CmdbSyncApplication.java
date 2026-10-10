@@ -1,5 +1,7 @@
 package com.cloudwise.cmdb;
 
+import com.cloudwise.cmdb.config.remote.CmdbRemoteConfigInitializer;
+import com.cloudwise.utils.GlobalPropertiesUtils;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -21,6 +23,15 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class CmdbSyncApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(CmdbSyncApplication.class, args);
+        decryptNacosPasswordIfPresent();
+        SpringApplication application = new SpringApplication(CmdbSyncApplication.class);
+        application.addInitializers(new CmdbRemoteConfigInitializer());
+        application.run(args);
+    }
+
+    private static void decryptNacosPasswordIfPresent() {
+        if (System.getProperty("cwNacosServer") != null) {
+            GlobalPropertiesUtils.loadNacosProperties();
+        }
     }
 }

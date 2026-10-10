@@ -33,7 +33,7 @@ BUNDLED_JAVA_HOME=""
 # 需要固定身份时用 user=<user> group=<group> 显式指定。
 PACKAGE_USER=""
 PACKAGE_GROUP=""
-# 平台下发的 application.yml 内容（JSON 或 YAML，仿 cdc PARAMETERS 段机制）
+# 平台下发的非敏感 application.yml 内容（JSON 或 YAML，仿 cdc PARAMETERS 段机制）
 JSON_CONF=""
 JSON_CONF_CONTENT=""
 
@@ -55,7 +55,7 @@ jsonConf=<file>:
   不传时默认用内置的 hkex-cmdb-sync-server/src/main/resources/application.yml。
 
   ⚠️ 传进来的内容会**明文**出现在打好的 .sh 里（`tar -xzf` 或直接 grep 都能取出）。
-     含真实凭据的配置只应交付给对应环境，不要外发。
+     因此这里只允许端口、日志、调度等非敏感运行配置，严禁写入 servicenow.*、douc.* 或 Nacos 密码。
 
 user=<user> group=<group>:
   安装身份的运行时用户/组（写入 ----PARAMETERS 段的 PARAM_USER/PARAM_GROUP）。
@@ -203,8 +203,8 @@ ensure_prerequisites() {
   [ -f "$BASE_DIR/scripts/install.sh" ] || fail "install.sh not found"
   [ -f "$BASE_DIR/scripts/uninstall.sh" ] || fail "uninstall.sh not found"
   [ -f "$BUILTIN_CONF" ] || fail "内置配置不存在: $BUILTIN_CONF
-  它是安装包的默认配置（含真实凭据，已在 .gitignore 里）。
-  新克隆的仓库里没有这个文件，从模板复制一份再填：
+  它是安装包的默认非敏感运行配置。
+  新克隆的仓库里没有这个文件时，从模板复制：
     cp $MODULE_DIR/src/main/resources/application.yml.example $BUILTIN_CONF"
   if [ -n "$JSON_CONF" ]; then
     [ -f "$JSON_CONF" ] || fail "jsonConf file not found: $JSON_CONF"
@@ -233,8 +233,13 @@ conf_to_single_line_json() {
         STDERR.puts "YAML 解析失败: #{e.message}"
         exit 1
       end
-      unless obj.is_a?(Hash) || obj.is_a?(Array)
-        STDERR.puts "配置顶层不是对象/数组，无法作为 application.yml"
+      unless obj.is_a?(Hash)
+        STDERR.puts "配置顶层不是对象，无法作为 application.yml"
+        exit 1
+      end
+      forbidden = obj.keys.map(&:to_s) & ["servicenow", "douc"]
+      unless forbidden.empty?
+        STDERR.puts "安装包配置禁止包含业务凭据段: #{forbidden.sort.join(",")}"
         exit 1
       end
       print JSON.generate(obj)
@@ -247,8 +252,12 @@ conf_to_single_line_json() {
 import json, sys, yaml
 with open(sys.argv[1]) as f:
     data = yaml.safe_load(f)
-if not isinstance(data, (dict, list)):
-    sys.stderr.write("配置顶层不是对象/数组\n")
+if not isinstance(data, dict):
+    sys.stderr.write("配置顶层不是对象\n")
+    sys.exit(1)
+forbidden = sorted(set(data).intersection({"servicenow", "douc"}))
+if forbidden:
+    sys.stderr.write("安装包配置禁止包含业务凭据段: " + ",".join(forbidden) + "\n")
     sys.exit(1)
 print(json.dumps(data, separators=(",", ":")), end="")
 ' "$_file" || fail "把 $_file 转成单行 JSON 失败（见上面的 python 报错）"
@@ -326,6 +335,7 @@ prepare_staging() {
   cp "$BASE_DIR/scripts/install.sh" "$STAGING_DIR/packaging/scripts/install.sh"
   cp "$BASE_DIR/scripts/uninstall.sh" "$STAGING_DIR/packaging/scripts/uninstall.sh"
   cp "$BASE_DIR/bin/agentctl" "$STAGING_DIR/packaging/bin/agentctl"
+  cp "$MODULE_DIR/bin/publishCmdbConfig" "$STAGING_DIR/packaging/bin/publishCmdbConfig"
   cp "$BASE_DIR/run.sh" "$STAGING_DIR/packaging/run.sh"
   cp "$BUILTIN_CONF" "$STAGING_DIR/src/main/resources/application.yml"
   cp "$APP_JAR" "$STAGING_DIR/target/"
@@ -362,6 +372,7 @@ prepare_staging() {
     "$STAGING_DIR/packaging/scripts/install.sh" \
     "$STAGING_DIR/packaging/scripts/uninstall.sh" \
     "$STAGING_DIR/packaging/bin/agentctl" \
+    "$STAGING_DIR/packaging/bin/publishCmdbConfig" \
     "$STAGING_DIR/packaging/run.sh"
 }
 

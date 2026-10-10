@@ -66,9 +66,7 @@ public class ConfigValidator {
 
         if (!missing.isEmpty()) {
             log.error("{}启动自检失败，缺少 {} 项必需配置：{}。"
-                            + "请检查插件目录下的 conf/application.yml"
-                            + "（模板见工程里的 src/main/resources/application.yml.example，"
-                            + "或由平台通过 PARAM_JSON_CONF 下发）",
+                            + "请检查 Nacos 中的 CMDB 密文配置并重新发布",
                     TAG, missing.size(), missing);
             throw new IllegalStateException("缺少必需配置：" + missing);
         }
