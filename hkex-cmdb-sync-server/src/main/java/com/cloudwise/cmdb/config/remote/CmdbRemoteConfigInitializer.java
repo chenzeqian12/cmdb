@@ -1,20 +1,18 @@
 package com.cloudwise.cmdb.config.remote;
 
+import com.cloudwise.utils.GlobalPropertiesUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationContextInitializer;
-import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
+import org.springframework.boot.env.EnvironmentPostProcessor;
+import org.springframework.core.Ordered;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
 
-/** 在任何业务 Bean 创建前装载 CMDB 远程密文配置。 */
-public class CmdbRemoteConfigInitializer
-        implements ApplicationContextInitializer<ConfigurableApplicationContext> {
+public class CmdbRemoteConfigInitializer implements EnvironmentPostProcessor, Ordered {
 
-    private static final Logger LOG = LoggerFactory.getLogger(CmdbRemoteConfigInitializer.class);
-
-    private static final String PROPERTY_SOURCE_NAME = "cmdbNacosDoucRemoteConfig";
+    static final String PROPERTY_SOURCE_NAME = "cmdbNacosDoucRemoteConfig";
 
     private final SnapshotLoader snapshotLoader;
 
@@ -27,29 +25,38 @@ public class CmdbRemoteConfigInitializer
     }
 
     @Override
-    public void initialize(ConfigurableApplicationContext applicationContext) {
-        CmdbRemoteConfigSettings settings = CmdbRemoteConfigSettings.from(
-                applicationContext.getEnvironment());
-        if (!settings.enabled()) {
-            LOG.warn("CMDB Nacos DOUC remote configuration is disabled");
+    public int getOrder() {
+        return ConfigDataEnvironmentPostProcessor.ORDER + 1;
+    }
+
+    @Override
+    public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
+        if (environment.getPropertySources().contains(PROPERTY_SOURCE_NAME)) {
             return;
         }
-
+        CmdbRemoteConfigSettings settings = CmdbRemoteConfigSettings.from(environment);
+        if (!settings.enabled()) {
+            return;
+        }
         CmdbRemoteConfigSnapshot snapshot = snapshotLoader.load(settings);
-        applicationContext.getEnvironment().getPropertySources().addFirst(
+        environment.getPropertySources().addFirst(
                 new MapPropertySource(PROPERTY_SOURCE_NAME, new LinkedHashMap<>(snapshot.properties())));
-        LOG.info("CMDB integration configuration loaded from Nacos through DOUC");
     }
 
     private static CmdbRemoteConfigSnapshot loadFromRemote(CmdbRemoteConfigSettings settings) {
+        DoucCryptoClient.protectBootstrapLogging();
+        GlobalPropertiesUtils.loadNacosProperties();
         ObjectMapper objectMapper = new ObjectMapper();
-        NacosCmdbConfigRepository repository = new NacosCmdbConfigRepository(settings, objectMapper);
-        CmdbConfigEnvelope envelope = repository.loadEnvelope();
+        NacosCmdbConfigRepository repository = new NacosCmdbConfigRepository(settings);
+        String document = repository.loadDocument();
+        CmdbRemoteConfigBinder binder = new CmdbRemoteConfigBinder(objectMapper);
+        CmdbEncryptedCredentials credentials = binder.encryptedCredentials(document);
         String registryAddress = requiredSystemProperty("dubbo.registry.address");
         try (DoucCryptoClient client = DoucCryptoClient.connect(
                 registryAddress, "hkex-cmdb-sync-config-loader")) {
-            String plaintext = client.decrypt(envelope.ciphertext());
-            return new CmdbRemoteConfigBinder(objectMapper).bind(plaintext);
+            String username = client.decrypt(credentials.username());
+            String password = client.decrypt(credentials.password());
+            return binder.bind(document, username, password);
         }
     }
 

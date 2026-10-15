@@ -7,10 +7,10 @@ CMDB 同步服务不再从本地文件读取 `servicenow.*` 和 `douc.*` 业务�
 部署后的配置链路如下：
 
 1. 运维在受控目录准备一次性明文 JSON。
-2. `publishCmdbConfig` 调用 DOUC 加密。
-3. Nacos 只保存 DOUC 返回的密文信封。
-4. CMDB 启动时读取密文，调用 DOUC 解密。
-5. 解密结果校验通过后，才创建 ServiceNow 和 DOUC 客户端。
+2. `publishCmdbConfig` 仅调用 DOUC 加密 ServiceNow 登录用户名和密码。
+3. Nacos 保存完整可读 JSON，两个凭据字段使用 `username-encrypted` 和 `password-encrypted`。
+4. CMDB 启动时读取 JSON，分别调用 DOUC 解密两个字段。
+5. 完整配置校验通过后，才创建 ServiceNow 和 DOUC 客户端。
 
 Nacos 固定位置：
 
@@ -19,7 +19,7 @@ Nacos 固定位置：
 | Group | `hkex-cmdb-sync` |
 | Data ID | `hkex-cmdb-sync-config.json` |
 
-本地仍保留端口、日志、调度、心跳等运行配置。远程密文只能配置 `servicenow.*` 和 `douc.*`。
+Nacos JSON 必须包含 `spring`、`server`、`logging`、`xxl`、`hkex`、`servicenow`、`douc` 全部七段。
 
 ## 2. 前置条件
 
@@ -49,7 +49,8 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params
 
 ## 4. 准备待发布配置
 
-在受控临时目录创建 `cmdb-config.json`。以下内容仅为结构示例，不得填写真实信息后提交到仓库：
+复制 `conf/cmdb-app.full.json.example` 到受控临时目录作为 `cmdb-config.json`，
+填写全部七段配置。其中 ServiceNow 输入保留以下明文字段，发布工具会将它们替换为密文字段：
 
 ```json
 {
@@ -59,21 +60,11 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params
     "client-secret": "<client-secret>",
     "username": "<username>",
     "password": "<password>"
-  },
-  "douc": {
-    "base-url": "https://douc.example.invalid",
-    "auth-mode": "apim",
-    "app-key": "<app-key>",
-    "app-secret": "<app-secret>",
-    "account-id": "<account-id>",
-    "top-account-id": "<top-account-id>",
-    "user-id": "<user-id>",
-    "dry-run": true
   }
 }
 ```
 
-发布工具会拒绝未知根字段、未知配置字段和缺少必填项的配置。
+示例省略了其他六段，实际文件不得省略。填写真实凭据的文件不得提交到仓库。
 
 ## 5. 加密并发布到 Nacos
 
@@ -86,9 +77,10 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params
 工具会：
 
 1. 校验明文 JSON。
-2. 调用 DOUC 加密，且不重试加密请求。
-3. 向 Nacos 的 `hkex-cmdb-sync` / `hkex-cmdb-sync-config.json` 发布密文信封。
-4. 只输出密文长度和摘要前缀，不输出明文或完整密文。
+2. 分别调用 DOUC 加密 SN 用户名和密码，并立即解密回读比对。
+3. 删除明文 `username/password`，生成 `username-encrypted/password-encrypted`。
+4. 向 Nacos 的 `hkex-cmdb-sync` / `hkex-cmdb-sync-config.json` 发布完整 JSON。
+5. 只输出文档长度和摘要前缀，不输出明文或完整密文。
 
 发布成功后，应立即安全删除临时明文文件。不要删除 DOUC 为该密文生成的解密登记。
 
@@ -102,7 +94,7 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params
 检查日志：
 
 ```bash
-grep -E "CMDB integration configuration loaded from Nacos through DOUC|启动自检通过" \
+grep -E "启动自检通过" \
   logs/start.log logs/hkex-cmdb-sync.log 2>/dev/null
 ```
 
@@ -115,7 +107,8 @@ grep -E "CMDB integration configuration loaded from Nacos through DOUC|启动自
 3. 发布成功后删除临时明文文件。
 4. 重启 CMDB 服务。
 
-每次发布都会生成新的 DOUC 密文和对应解密登记。不要手工修改 Nacos 中的密文，也不要清理仍在使用的登记记录。
+每次发布都会为 SN 用户名和密码生成新的 DOUC 密文及对应解密登记。
+不要手工修改两个密文字段，也不要清理仍在使用的登记记录。
 
 ## 8. 失败处理
 
@@ -123,8 +116,8 @@ grep -E "CMDB integration configuration loaded from Nacos through DOUC|启动自
 
 - 缺少 Nacos 启动参数。
 - Nacos 不可达、认证失败或配置不存在。
-- 密文信封格式错误。
+- JSON 结构错误，或 SN 密文字段缺失。
 - DOUC 不可达或找不到密文登记。
-- 解密结果包含未知字段或缺少必填项。
+- 配置包含未知字段、SN 明文凭据字段或缺少必填项。
 
 排查时只检查连接状态、Group/Data ID、字段名称和日志错误类型，不要打印任何密码、明文配置或完整密文。

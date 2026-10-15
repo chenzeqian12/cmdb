@@ -6,6 +6,8 @@ pid/
 .idea/
 .vscode/
 .DS_Store
+__pycache__/
+*.pyc
 
 # 历史本地 profile 文件继续忽略；新方案不允许在其中保存真实凭据。
 # 注意用 **/ 前缀：带斜杠的模式锚定在仓库根，而该文件在子模块下，不加 **/ 匹配不到。
@@ -16,6 +18,10 @@ pid/
 
 # OmniAgent 插件形态的现场主配置只保留非敏感运行参数，仍由现场独立维护。
 **/src/main/resources/application.yml
+
+# 填写后的全量配置与密文由现场受控维护，不进入仓库。
+**/cmdb-app.full.json
+**/cmdb-app.encrypted.json
 
 # 打包产物
 dist/

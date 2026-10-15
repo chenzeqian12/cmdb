@@ -21,6 +21,14 @@ public class DoucCryptoClient implements AutoCloseable {
         this.closer = closer;
     }
 
+    static void protectBootstrapLogging() {
+        System.setProperty("nacos.logging.default.config.enabled", "false");
+        System.clearProperty("nacos.logging.config");
+        for (String name : java.util.List.of("org.apache.dubbo", "com.alibaba.nacos", "com.cloudwise.utils")) {
+            org.apache.logging.log4j.core.config.Configurator.setLevel(name, org.apache.logging.log4j.Level.OFF);
+        }
+    }
+
     @SuppressWarnings("deprecation")
     public static DoucCryptoClient connect(String registryAddress, String applicationName) {
         if (registryAddress == null || registryAddress.isBlank()) {
@@ -43,7 +51,7 @@ public class DoucCryptoClient implements AutoCloseable {
             return new DoucCryptoClient(reference.get(), reference::destroy);
         } catch (RuntimeException exception) {
             reference.destroy();
-            throw new IllegalStateException("failed to connect to DOUC crypto service", exception);
+            throw new IllegalStateException("failed to connect to DOUC crypto service");
         }
     }
 
@@ -59,21 +67,19 @@ public class DoucCryptoClient implements AutoCloseable {
         if (content == null || content.isBlank()) {
             throw new IllegalArgumentException((encrypt ? "plaintext" : "ciphertext") + " must not be empty");
         }
+        AsymmetricOut output;
         try {
             AsymmetricIn input = new AsymmetricIn();
             input.setContent(content);
-            AsymmetricOut output = encrypt ? facade.encrypt(input) : facade.decrypt(input);
-            if (output == null || output.getResult() == null || output.getResult().isBlank()) {
-                throw new IllegalStateException("DOUC " + (encrypt ? "encrypt" : "decrypt")
-                        + " returned an empty result");
-            }
-            return output.getResult();
-        } catch (IllegalStateException exception) {
-            throw exception;
+            output = encrypt ? facade.encrypt(input) : facade.decrypt(input);
         } catch (Exception exception) {
-            throw new IllegalStateException("DOUC " + (encrypt ? "encryption" : "decryption")
-                    + " failed", exception);
+            throw new IllegalStateException("DOUC " + (encrypt ? "encryption" : "decryption") + " failed");
         }
+        if (output == null || output.getResult() == null || output.getResult().isBlank()) {
+            throw new IllegalStateException("DOUC " + (encrypt ? "encrypt" : "decrypt")
+                    + " returned an empty result");
+        }
+        return output.getResult();
     }
 
     @Override

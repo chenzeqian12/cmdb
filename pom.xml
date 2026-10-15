@@ -42,6 +42,7 @@
           build.time 由 build-helper-maven-plugin 生成，前缀 0 的提交号由 git-commit-id-plugin 提供。
         -->
         <server-name>hkexCmdbSync</server-name>
+        <omp.product.name>hkexCmdbSync</omp.product.name>
         <product-service-version>${project.version}</product-service-version>
         <final-tar-name>${server-name}-${product-service-version}-${build.time}-${git.commit.id.abbrev}</final-tar-name>
         <pkg-file-name-mapping>${artifact.artifactId}-${product-service-version}-${build.time}-${git.commit.id.abbrev}.${artifact.extension}

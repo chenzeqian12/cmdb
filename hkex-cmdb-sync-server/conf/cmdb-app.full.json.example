@@ -1,0 +1,79 @@
+{
+  "spring": {
+    "application": { "name": "hkex-cmdb-sync" },
+    "jackson": { "default-property-inclusion": "non_null" }
+  },
+  "server": { "port": 18081, "shutdown": "graceful" },
+  "logging": {
+    "file": { "path": "./logs" },
+    "level": {
+      "root": "INFO",
+      "com.cloudwise.cmdb": "INFO",
+      "org.apache.dubbo": "OFF",
+      "com.alibaba.nacos": "OFF",
+      "com.cloudwise.utils": "OFF"
+    }
+  },
+  "xxl": {
+    "job": {
+      "admin": { "address": "" },
+      "accessToken": "",
+      "executor": {
+        "app": { "name": "hkex-cmdb-sync" },
+        "port": 18599,
+        "log": { "path": "./logs/jobhandler", "retention": { "days": 7 } },
+        "ip": ""
+      }
+    }
+  },
+  "hkex": {
+    "sync": {
+      "scheduled-enabled": false,
+      "on-startup": false,
+      "startup-delay-seconds": 30,
+      "cron": "0 0 3 * * ?",
+      "member-sync": true
+    },
+    "heartbeat": {
+      "enabled": true,
+      "file": "./heartbeat",
+      "interval-seconds": 30
+    }
+  },
+  "servicenow": {
+    "base-url": "",
+    "token-path": "/oauth_token.do",
+    "client-id": "",
+    "client-secret": "",
+    "username": "",
+    "password": "",
+    "group-query": "group.nameENDSWITH_SUP",
+    "page-size": 5000,
+    "connect-timeout": 10000,
+    "read-timeout": 120000,
+    "token-refresh-ahead-seconds": 300
+  },
+  "douc": {
+    "base-url": "",
+    "gateway-prefix": "/docp/gateway/douc",
+    "api-prefix": "/api/v1",
+    "auth-mode": "apim",
+    "app-key": "",
+    "app-secret": "",
+    "sign-mode": "sm3",
+    "cookie": "",
+    "account-id": "",
+    "top-account-id": "",
+    "user-id": "",
+    "user-name": "cmdb-sync",
+    "language": "zh_CN",
+    "parent-group-id": "",
+    "default-group-type": 1,
+    "user-page-size": 500,
+    "connect-timeout": 10000,
+    "read-timeout": 60000,
+    "dry-run": true,
+    "delete-missing-groups": false,
+    "group-sync-state-file": "./data/douc-managed-groups.json"
+  }
+}

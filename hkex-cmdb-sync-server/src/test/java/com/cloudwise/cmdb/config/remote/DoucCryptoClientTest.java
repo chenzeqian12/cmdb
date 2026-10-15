@@ -29,6 +29,55 @@ class DoucCryptoClientTest {
     }
 
     @Test
+    void rpcFailureDoesNotExposeInputOrProviderCause() throws Exception {
+        AsymmetricSecurityFacade facade = Mockito.mock(AsymmetricSecurityFacade.class);
+        Mockito.when(facade.encrypt(Mockito.any())).thenThrow(
+                new IllegalArgumentException("PRIVATE_SECRET_SENTINEL"));
+        DoucCryptoClient client = new DoucCryptoClient(facade, () -> { });
+
+        Assertions.assertThatThrownBy(() -> client.encrypt("PRIVATE_SECRET_SENTINEL"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageNotContaining("PRIVATE_SECRET_SENTINEL")
+                .hasNoCause();
+    }
+
+    @Test
+    void bootstrapLoggingProtectionAndConnectionSettings() {
+        DoucCryptoClient.protectBootstrapLogging();
+        Assertions.assertThat(System.getProperty("nacos.logging.default.config.enabled")).isEqualTo("false");
+        Assertions.assertThat(org.apache.logging.log4j.LogManager.getLogger("org.apache.dubbo").getLevel())
+                .isEqualTo(org.apache.logging.log4j.Level.OFF);
+        AsymmetricSecurityFacade facade = Mockito.mock(AsymmetricSecurityFacade.class);
+        try (var references = Mockito.mockConstruction(org.apache.dubbo.config.ReferenceConfig.class,
+                (reference, context) -> Mockito.when(reference.get()).thenReturn(facade))) {
+            try (DoucCryptoClient client = DoucCryptoClient.connect("dummy-registry", "test-crypto")) {
+                var reference = references.constructed().get(0);
+                Mockito.verify(reference).setRetries(0);
+                Mockito.verify(reference).setCheck(true);
+                Mockito.verify(reference).setTimeout(15000);
+                Mockito.verify(reference).setGroup("DOUC_RPC_DUBBO");
+            }
+            Mockito.verify(references.constructed().get(0)).destroy();
+        }
+    }
+
+    @Test
+    void connectionFailureAndEmptyInputFailSafely() {
+        Assertions.assertThatThrownBy(() -> DoucCryptoClient.connect("", "test"))
+                .hasMessageContaining("dubbo.registry.address");
+        try (var references = Mockito.mockConstruction(org.apache.dubbo.config.ReferenceConfig.class,
+                (reference, context) -> Mockito.when(reference.get()).thenThrow(
+                        new IllegalStateException("PRIVATE_SECRET_SENTINEL")))) {
+            Assertions.assertThatThrownBy(() -> DoucCryptoClient.connect("dummy-registry", "test"))
+                    .hasNoCause().hasMessageNotContaining("PRIVATE_SECRET_SENTINEL");
+            Mockito.verify(references.constructed().get(0)).destroy();
+        }
+        DoucCryptoClient client = new DoucCryptoClient(Mockito.mock(AsymmetricSecurityFacade.class), () -> { });
+        Assertions.assertThatThrownBy(() -> client.encrypt(""))
+                .hasMessageContaining("must not be empty");
+    }
+
+    @Test
     @DisplayName("DOUC 返回空结果时失败关闭")
     void decryptEmptyResultFails() {
         AsymmetricSecurityFacade facade = Mockito.mock(AsymmetricSecurityFacade.class);

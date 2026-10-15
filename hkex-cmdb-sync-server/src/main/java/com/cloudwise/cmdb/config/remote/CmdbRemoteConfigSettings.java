@@ -2,7 +2,7 @@ package com.cloudwise.cmdb.config.remote;
 
 import org.springframework.core.env.Environment;
 
-/** CMDB 远程密文配置的位置。 */
+/** CMDB Nacos 配置的位置。 */
 public record CmdbRemoteConfigSettings(boolean enabled, String group, String dataId, long timeoutMs) {
 
     private static final String PREFIX = "cmdb.remote-config.";

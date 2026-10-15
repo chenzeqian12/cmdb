@@ -1,10 +1,9 @@
 kind: service
 name: hkexCmdbSync
-version: "@CMDB_VERSION@"
+version: ${project.version}
 product:
-  # 独立产品归属；上传服务包前必须先在 OMP 登记同名产品及对应版本。
-  name: "@OMP_PRODUCT_NAME@"
-  version: "@OMP_PRODUCT_VERSION@"
+  name: ${omp.product.name}
+  version: ${project.version}
 auto_launch: true
 base_env: false
 lang: java

@@ -4,13 +4,9 @@ import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.PropertyKeyConst;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.ConfigType;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.Iterator;
 import java.util.Properties;
-import java.util.Set;
 
-/** 从固定 Nacos 位置读取或发布 CMDB 密文信封。 */
+/** 从固定 Nacos 位置读取或发布 CMDB JSON 配置。 */
 public class NacosCmdbConfigRepository {
 
     @FunctionalInterface
@@ -20,78 +16,57 @@ public class NacosCmdbConfigRepository {
 
     private final CmdbRemoteConfigSettings settings;
 
-    private final ObjectMapper objectMapper;
-
     private final ConfigServiceFactory configServiceFactory;
 
-    public NacosCmdbConfigRepository(CmdbRemoteConfigSettings settings, ObjectMapper objectMapper) {
-        this(settings, objectMapper, NacosFactory::createConfigService);
+    public NacosCmdbConfigRepository(CmdbRemoteConfigSettings settings) {
+        this(settings, NacosFactory::createConfigService);
     }
 
     NacosCmdbConfigRepository(
             CmdbRemoteConfigSettings settings,
-            ObjectMapper objectMapper,
             ConfigServiceFactory configServiceFactory) {
         this.settings = settings;
-        this.objectMapper = objectMapper;
         this.configServiceFactory = configServiceFactory;
     }
 
-    public CmdbConfigEnvelope loadEnvelope() {
+    public String loadDocument() {
         settings.validate();
+        Properties properties = connectionProperties();
         ConfigService service = null;
+        String document;
         try {
-            service = configServiceFactory.create(connectionProperties());
-            String document = service.getConfig(
-                    settings.dataId(), settings.group(), settings.timeoutMs());
-            if (document == null || document.isBlank()) {
-                throw new IllegalStateException("CMDB encrypted configuration does not exist in Nacos");
-            }
-            JsonNode root = objectMapper.readTree(document);
-            validateEnvelopeShape(root);
-            CmdbConfigEnvelope envelope = objectMapper.treeToValue(root, CmdbConfigEnvelope.class);
-            envelope.validate();
-            return envelope;
-        } catch (IllegalStateException exception) {
-            throw exception;
+            service = configServiceFactory.create(properties);
+            document = service.getConfig(settings.dataId(), settings.group(), settings.timeoutMs());
         } catch (Exception exception) {
-            throw new IllegalStateException("failed to read CMDB encrypted configuration from Nacos", exception);
+            throw new IllegalStateException("failed to read CMDB configuration from Nacos");
         } finally {
             closeQuietly(service);
         }
+        if (document == null || document.isBlank()) {
+            throw new IllegalStateException("CMDB configuration does not exist in Nacos");
+        }
+        return document;
     }
 
-    public void publishEnvelope(CmdbConfigEnvelope envelope) {
+    public void publishDocument(String document) {
         settings.validate();
-        envelope.validate();
+        if (document == null || document.isBlank()) {
+            throw new IllegalArgumentException("CMDB configuration document must not be empty");
+        }
+        Properties properties = connectionProperties();
         ConfigService service = null;
+        boolean published;
         try {
-            service = configServiceFactory.create(connectionProperties());
-            String document = objectMapper.writeValueAsString(envelope);
-            boolean published = service.publishConfig(
+            service = configServiceFactory.create(properties);
+            published = service.publishConfig(
                     settings.dataId(), settings.group(), document, ConfigType.JSON.getType());
-            if (!published) {
-                throw new IllegalStateException("Nacos rejected the encrypted CMDB configuration");
-            }
-        } catch (IllegalStateException exception) {
-            throw exception;
         } catch (Exception exception) {
-            throw new IllegalStateException("failed to publish CMDB encrypted configuration to Nacos", exception);
+            throw new IllegalStateException("failed to publish CMDB configuration to Nacos");
         } finally {
             closeQuietly(service);
         }
-    }
-
-    private void validateEnvelopeShape(JsonNode root) {
-        if (!root.isObject()) {
-            throw new IllegalStateException("CMDB config envelope must be an object");
-        }
-        Set<String> allowed = Set.of("schemaVersion", "cipherType", "ciphertext");
-        Iterator<String> fields = root.fieldNames();
-        while (fields.hasNext()) {
-            if (!allowed.contains(fields.next())) {
-                throw new IllegalStateException("CMDB config envelope contains unsupported field");
-            }
+        if (!published) {
+            throw new IllegalStateException("Nacos rejected the CMDB configuration");
         }
     }
 

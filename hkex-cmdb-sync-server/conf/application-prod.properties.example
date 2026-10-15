@@ -1,5 +1,4 @@
-# prod profile 只允许覆盖非敏感运行参数。
-# servicenow.* 与 douc.* 必须通过 Nacos 密文配置发布，不得写在本文件中。
+# 本文件仅允许启动引导；应用配置保存到 Nacos，仅 SN 用户名和密码经 DOUC 加密。
 cmdb.remote-config.enabled=true
 cmdb.remote-config.group=hkex-cmdb-sync
 cmdb.remote-config.data-id=hkex-cmdb-sync-config.json

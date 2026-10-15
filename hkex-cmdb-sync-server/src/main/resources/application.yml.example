@@ -1,49 +1,7 @@
-# hkex-cmdb-sync · 本地运行配置模板
-#
-# ServiceNow 与 DOUC 业务配置不再写在本文件中。它们经 DOUC 加密后保存于 Nacos，
-# 服务启动时读取、解密并在 Spring 创建业务 Bean 前注入。
-
-spring:
-  application:
-    name: hkex-cmdb-sync
-  jackson:
-    default-property-inclusion: non_null
-
-server:
-  port: 18081
-  shutdown: graceful
-
-logging:
-  level:
-    com.cloudwise.cmdb: INFO
-
+# 仅保留启动引导；完整应用配置使用 conf/cmdb-app.full.json.example。
 cmdb:
   remote-config:
     enabled: true
     group: hkex-cmdb-sync
     data-id: hkex-cmdb-sync-config.json
     timeout-ms: 3000
-
-xxl:
-  job:
-    admin:
-      address: "${XXL_JOB_ADMIN_ADDRESS:}"
-    accessToken: "${XXL_JOB_ACCESS_TOKEN:}"
-    executor:
-      app.name: hkex-cmdb-sync
-      port: 18599
-      log.path: ./logs/jobhandler
-      log.retention.days: 7
-      ip: ""
-
-hkex:
-  sync:
-    scheduled-enabled: true
-    on-startup: true
-    startup-delay-seconds: 30
-    cron: "0 0 3 * * ?"
-    member-sync: true
-  heartbeat:
-    enabled: true
-    file: ./heartbeat
-    interval-seconds: 30

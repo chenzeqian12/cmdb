@@ -66,7 +66,7 @@ public class ConfigValidator {
 
         if (!missing.isEmpty()) {
             log.error("{}启动自检失败，缺少 {} 项必需配置：{}。"
-                            + "请检查 Nacos 中的 CMDB 密文配置并重新发布",
+                            + "请检查 Nacos 中的 CMDB 配置及 ServiceNow 凭据密文并重新发布",
                     TAG, missing.size(), missing);
             throw new IllegalStateException("缺少必需配置：" + missing);
         }

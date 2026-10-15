@@ -1,0 +1,9 @@
+kind: product
+name: ${omp.product.name}
+version: ${project.version}
+description: "港交所 CMDB 同步产品：从 ServiceNow 同步用户组及成员关系到 DOUC。"
+labels:
+  - 自研服务
+dependencies:
+service:
+  - name: hkexCmdbSync

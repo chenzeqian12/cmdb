@@ -21,6 +21,34 @@
     <includeBaseDirectory>true</includeBaseDirectory>
 
     <fileSets>
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>service.properties</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>644</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/conf</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>hkexCmdbSync.yaml</include>
+            </includes>
+            <filtered>true</filtered>
+            <fileMode>644</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/scripts</directory>
+            <outputDirectory>scripts</outputDirectory>
+            <excludes>
+                <exclude>**/__pycache__/**</exclude>
+                <exclude>**/*.pyc</exclude>
+            </excludes>
+            <fileMode>755</fileMode>
+            <directoryMode>755</directoryMode>
+        </fileSet>
         <!-- 工程根目录的 README 放到包根，方便现场直接看 -->
         <fileSet>
             <directory>${project.basedir}/..</directory>
@@ -51,6 +79,7 @@
             <outputDirectory>conf</outputDirectory>
             <includes>
                 <include>application.properties</include>
+                <include>cmdb-app.full.json.example</include>
             </includes>
             <fileMode>644</fileMode>
             <directoryMode>755</directoryMode>

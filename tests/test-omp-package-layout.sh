@@ -20,7 +20,9 @@ done
 
 grep -Eq '^kind:[[:space:]]*service$' "$YAML"
 grep -Eq '^name:[[:space:]]*hkexCmdbSync$' "$YAML"
-grep -Eq '^[[:space:]]*name:[[:space:]]*"@OMP_PRODUCT_NAME@"$' "$YAML"
+grep -Fq '  name: ${omp.product.name}' "$YAML"
+grep -Fq 'version: ${project.version}' "$YAML"
+python3 -m unittest discover -s "$PROJECT_DIR/tests" -p 'test_omp_product_package.py'
 grep -Eq '^level:[[:space:]]*0$' "$YAML"
 grep -Eq '^[[:space:]]*-[[:space:]]*name:[[:space:]]*jdk17$' "$YAML"
 grep -Eq '^[[:space:]]*-[[:space:]]*name:[[:space:]]*nacos$' "$YAML"

@@ -13,13 +13,22 @@ import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
-/** 把 DOUC 解密结果严格绑定为 CMDB 可使用的两组业务配置。 */
+/** 严格校验 Nacos 配置，并将解密后的 SN 凭据绑定为运行时属性。 */
 public class CmdbRemoteConfigBinder {
 
-    private static final Set<String> ROOT_FIELDS = Set.of("servicenow", "douc");
+    private static final Set<String> APPLICATION_FIELDS = Set.of(
+            "spring.application.name", "spring.jackson.default-property-inclusion",
+            "server.port", "server.shutdown", "logging.file.path",
+            "xxl.job.admin.address", "xxl.job.accessToken", "xxl.job.executor.app.name",
+            "xxl.job.executor.port", "xxl.job.executor.log.path",
+            "xxl.job.executor.log.retention.days", "xxl.job.executor.ip",
+            "hkex.sync.scheduled-enabled", "hkex.sync.on-startup",
+            "hkex.sync.startup-delay-seconds", "hkex.sync.cron", "hkex.sync.member-sync",
+            "hkex.heartbeat.enabled", "hkex.heartbeat.file", "hkex.heartbeat.interval-seconds");
 
     private static final Set<String> SERVICENOW_FIELDS = Set.of(
-            "base-url", "token-path", "client-id", "client-secret", "username", "password",
+            "base-url", "token-path", "client-id", "client-secret",
+            "username-encrypted", "password-encrypted",
             "group-query", "page-size", "connect-timeout", "read-timeout",
             "token-refresh-ahead-seconds");
 
@@ -36,16 +45,20 @@ public class CmdbRemoteConfigBinder {
         this.objectMapper = objectMapper;
     }
 
-    public CmdbRemoteConfigSnapshot bind(String plaintextJson) {
-        if (plaintextJson == null || plaintextJson.isBlank()) {
-            throw new IllegalStateException("decrypted CMDB configuration is empty");
-        }
+    public CmdbEncryptedCredentials encryptedCredentials(String documentJson) {
+        Map<String, Object> flattened = parseAndValidate(documentJson);
+        return new CmdbEncryptedCredentials(
+                requiredText(flattened, "servicenow.username-encrypted"),
+                requiredText(flattened, "servicenow.password-encrypted"));
+    }
+
+    public CmdbRemoteConfigSnapshot bind(String documentJson, String username, String password) {
+        Map<String, Object> flattened = parseAndValidate(documentJson);
+        flattened.remove("servicenow.username-encrypted");
+        flattened.remove("servicenow.password-encrypted");
+        flattened.put("servicenow.username", requireDecrypted("servicenow.username", username));
+        flattened.put("servicenow.password", requireDecrypted("servicenow.password", password));
         try {
-            Map<String, Object> document = objectMapper.readValue(
-                    plaintextJson, new TypeReference<Map<String, Object>>() { });
-            validateDocumentShape(document);
-            Map<String, Object> flattened = new LinkedHashMap<>();
-            flattenInto(flattened, "", document);
             Binder binder = new Binder(List.of(new MapConfigurationPropertySource(flattened)));
             ServiceNowProperties serviceNow = binder.bind(
                             "servicenow", Bindable.of(ServiceNowProperties.class))
@@ -57,12 +70,53 @@ public class CmdbRemoteConfigBinder {
         } catch (IllegalStateException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw new IllegalStateException("failed to parse decrypted CMDB configuration", exception);
+            throw new IllegalStateException("failed to bind CMDB configuration");
         }
     }
 
+    private Map<String, Object> parseAndValidate(String documentJson) {
+        if (documentJson == null || documentJson.isBlank()) {
+            throw new IllegalStateException("CMDB configuration is empty");
+        }
+        try {
+            Map<String, Object> document = objectMapper.readValue(
+                    documentJson, new TypeReference<Map<String, Object>>() { });
+            validateDocumentShape(document);
+            Map<String, Object> flattened = new LinkedHashMap<>();
+            flattenInto(flattened, "", document);
+            validateApplicationFields(flattened);
+            if (!flattened.keySet().containsAll(APPLICATION_FIELDS)) {
+                throw new IllegalStateException("application configuration is incomplete; use the full JSON template");
+            }
+            validateApplicationValues(flattened);
+            requiredText(flattened, "servicenow.username-encrypted");
+            requiredText(flattened, "servicenow.password-encrypted");
+            return flattened;
+        } catch (IllegalStateException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("failed to parse or validate CMDB configuration");
+        }
+    }
+
+    private String requiredText(Map<String, Object> properties, String key) {
+        Object value = properties.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            throw new IllegalStateException("empty encrypted credential field: " + key);
+        }
+        return String.valueOf(value);
+    }
+
+    private String requireDecrypted(String key, String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("decrypted credential is empty: " + key);
+        }
+        return value;
+    }
+
     private void validateDocumentShape(Map<String, Object> document) {
-        rejectUnknown(document, ROOT_FIELDS, "CMDB config root");
+        rejectUnknown(document, Set.of("servicenow", "douc", "spring", "server", "logging", "xxl", "hkex"),
+                "CMDB config root");
         validateSection(document, "servicenow", SERVICENOW_FIELDS);
         validateSection(document, "douc", DOUC_FIELDS);
     }
@@ -95,6 +149,79 @@ public class CmdbRemoteConfigBinder {
         if (unknown != null) {
             throw new IllegalStateException(location + " contains unsupported field: " + unknown);
         }
+    }
+
+    private void validateApplicationFields(Map<String, Object> properties) {
+        properties.forEach((key, value) -> {
+            if (key.startsWith("servicenow.") || key.startsWith("douc.")) {
+                return;
+            }
+            boolean isLoggingLevel = key.startsWith("logging.level.")
+                    && key.length() > "logging.level.".length();
+            if (!APPLICATION_FIELDS.contains(key) && !isLoggingLevel) {
+                throw new IllegalStateException("CMDB configuration contains unsupported field: " + key);
+            }
+            if (value == null || value instanceof List<?>) {
+                throw new IllegalStateException("CMDB configuration field must be scalar: " + key);
+            }
+            if (isLoggingLevel) {
+                validateLoggingLevel(key, value);
+            }
+        });
+    }
+
+    private void validateLoggingLevel(String key, Object value) {
+        String logger = key.substring("logging.level.".length());
+        if (!logger.matches("[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z][A-Za-z0-9]*)*")) {
+            throw new IllegalStateException("unsupported logging logger name");
+        }
+        String level = String.valueOf(value).toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "OFF").contains(level)) {
+            throw new IllegalStateException("invalid logging level");
+        }
+        String normalizedLogger = logger.toLowerCase(java.util.Locale.ROOT);
+        if (List.of("org.apache.dubbo", "com.alibaba.nacos", "com.cloudwise.utils").stream()
+                .anyMatch(name -> normalizedLogger.equals(name) || normalizedLogger.startsWith(name + "."))
+                && !"OFF".equals(level)) {
+            throw new IllegalStateException("credential-bearing logger must remain OFF");
+        }
+        boolean isBusinessLogger = logger.equals("com.cloudwise.cmdb") || logger.startsWith("com.cloudwise.cmdb.");
+        if (!isBusinessLogger && Set.of("DEBUG", "TRACE").contains(level)) {
+            throw new IllegalStateException("DEBUG and TRACE are restricted to CMDB business loggers");
+        }
+    }
+
+    private void validateApplicationValues(Map<String, Object> properties) {
+        Binder binder = new Binder(List.of(new MapConfigurationPropertySource(properties)));
+        for (String key : List.of("server.port", "xxl.job.executor.port")) {
+            int port = requiredValue(binder, key, Integer.class);
+            if (port < 0 || port > 65535) {
+                throw new IllegalStateException("port must be between 0 and 65535: " + key);
+            }
+        }
+        for (String key : List.of("hkex.sync.scheduled-enabled", "hkex.sync.on-startup",
+                "hkex.sync.member-sync", "hkex.heartbeat.enabled")) {
+            requiredValue(binder, key, Boolean.class);
+        }
+        for (String key : List.of("hkex.sync.startup-delay-seconds", "hkex.heartbeat.interval-seconds")) {
+            long value = requiredValue(binder, key, Long.class);
+            if (value < 0 || (key.equals("hkex.heartbeat.interval-seconds") && value == 0)) {
+                throw new IllegalStateException("invalid time interval: " + key);
+            }
+        }
+        if (requiredValue(binder, "xxl.job.executor.log.retention.days", Integer.class) < 0) {
+            throw new IllegalStateException("invalid XXL log retention days");
+        }
+        requiredValue(binder, "server.shutdown", org.springframework.boot.web.server.Shutdown.class);
+        requiredValue(binder, "spring.jackson.default-property-inclusion", com.fasterxml.jackson.annotation.JsonInclude.Include.class);
+        org.springframework.scheduling.support.CronExpression.parse(requiredValue(binder, "hkex.sync.cron", String.class));
+        if (requiredValue(binder, "logging.file.path", String.class).isBlank()) {
+            throw new IllegalStateException("logging.file.path must not be empty");
+        }
+    }
+
+    private <T> T requiredValue(Binder binder, String key, Class<T> type) {
+        return binder.bind(key, type).orElseThrow(() -> new IllegalStateException("empty application field: " + key));
     }
 
     private void flattenInto(Map<String, Object> target, String prefix, Object value) {

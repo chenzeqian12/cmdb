@@ -38,4 +38,30 @@ fi
 
 PATH=$ORIGINAL_PATH
 export PATH
-printf 'Java 17 resolution: OK\n'
+
+mkdir -p "$TEMP_DIR/service/bin" "$TEMP_DIR/service/conf" "$TEMP_DIR/caller"
+cp "$PROJECT_DIR/hkex-cmdb-sync-server/bin/publishCmdbConfig" "$TEMP_DIR/service/bin/"
+cp "$HELPER" "$TEMP_DIR/service/bin/"
+printf '%s\n' 'CW_NACOS_SERVER=dummy-nacos' 'CW_NACOS_USERNAME=dummy-user' \
+    'CW_NACOS_PASSWORD=dummy-encrypted-password' 'CW_NACOS_NAMESPACE=dummy-namespace' \
+    > "$TEMP_DIR/service/conf/nacos.params"
+cat > "$TEMP_DIR/jdk17/bin/java" <<'JAVA'
+#!/usr/bin/env bash
+if [ "$1" = "-version" ]; then
+    printf 'openjdk version "17.0.15"\n' >&2
+    exit 0
+fi
+printf '%s\n' "$@" > "$ARGUMENT_CAPTURE"
+JAVA
+chmod 755 "$TEMP_DIR/jdk17/bin/java"
+JAVA_17_HOME="$TEMP_DIR/jdk17"
+ARGUMENT_CAPTURE="$TEMP_DIR/arguments"
+export JAVA_17_HOME ARGUMENT_CAPTURE
+(
+    cd "$TEMP_DIR/caller"
+    bash "$TEMP_DIR/service/bin/publishCmdbConfig" --encrypt-only 'plain config.json' 'cipher config.json'
+)
+grep -Fx -- '--encrypt-only' "$ARGUMENT_CAPTURE"
+grep -Fx -- "$TEMP_DIR/caller/plain config.json" "$ARGUMENT_CAPTURE"
+grep -Fx -- "$TEMP_DIR/caller/cipher config.json" "$ARGUMENT_CAPTURE"
+printf 'Java 17 resolution and encryption arguments: OK\n'

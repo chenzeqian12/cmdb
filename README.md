@@ -131,7 +131,8 @@ mvn test -Dtest=SmallSampleSyncIntegrationTest -Dit.enabled=true \
 mvn clean package
 ```
 
-ServiceNow 和 DOUC 业务接入配置不再放在本地文件中，而是经 DOUC 加密后保存到 Nacos。
+ServiceNow 和 DOUC 业务接入配置不再放在本地文件中，而是保存到 Nacos；
+仅 ServiceNow 登录用户名和密码经 DOUC 加密。
 部署及配置发布步骤见 [CMDB Nacos DOUC 配置部署指南](docs/CMDB%20Nacos%20DOUC%20配置部署指南.md)。
 
 > `-Dsurefire.failIfNoSpecifiedTests=false` 是必需的：`hkex-cmdb-sync-common` 模块没有测试，
@@ -190,7 +191,7 @@ SPRING_PROFILE=dev ./bin/hkexCmdbSync start    # 指定环境，默认 prod
 | 配置 | 存放位置 |
 |---|---|
 | 端口、日志、调度、心跳等非敏感运行配置 | `conf/application.properties` |
-| ServiceNow 与 DOUC 业务接入配置 | Nacos 密文，启动时经 DOUC 解密 |
+| ServiceNow 与 DOUC 业务接入配置 | Nacos JSON；仅 SN `username-encrypted` / `password-encrypted` 为 DOUC 密文 |
 | Nacos 连接参数 | OMP 依赖通道生成的 `conf/nacos.params`，权限 0600 |
 
 服务不会从本地 `application-dev.properties` 或 `application-prod.properties` 回退读取业务凭据。
@@ -203,7 +204,7 @@ Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进�
 
 ### 换环境要改什么
 
-换环境时重新发布一份完整的 Nacos 密文配置，再重启服务：
+换环境时重新发布一份完整的 Nacos JSON 配置，再重启服务：
 
 | 配置 | dev（当前值） | 生产 |
 |---|---|---|
@@ -214,7 +215,7 @@ Tomcat 起在 18080、`status` 显示 running、`stop` 清理干净无残留进�
 | `douc.user-id` | **必须实测复核**，见下 |
 | `douc.dry-run` | 首次发布保持 `true`，确认计划无误后再改 `false` |
 
-具体发布步骤见部署指南。Nacos 只保存 DOUC 密文信封，不保存上述字段的明文。
+具体发布步骤见部署指南。Nacos 中不保存 SN 用户名和密码明文；其他配置保持可读。
 
 > **`douc.user-id` 默认是 `1`** —— 实测 dev 上 `1` 能看到全部用户，`3` 返回 0 条。
 > 它决定 `/user/list` 的可见范围，**填错不会报错**，只会让匹配率静默归零。
@@ -312,15 +313,18 @@ build-job:
 
 ### OMP 部署
 
-OMP 应用商店使用单独的标准服务包，不直接上传 Maven assembly 产物：
+OMP 应用商店使用与 GCP 一致的完整产品包。Maven `package` 先生成服务包，再将产品定义、服务定义和服务包封装为产品包：
 
 ```bash
 ./omp-package.sh
 ```
 
-产物位于 `dist/omp/hkexCmdbSync-<版本>.tar.gz`。服务归属为独立产品
-`hkexCmdbSync`，不复用 `docc`、`douc` 等现有产品。上传前必须先在 OMP 中登记
-该产品及对应版本，否则平台会报“归属的产品包在数据库中不存在”。
+产物位于 `dist/omp/`：
+
+- `hkexCmdbSync-<版本>-<时间戳>-install.tar.gz`：首次上传的产品包，登记独立产品及服务。
+- `hkexCmdbSync-<版本>-<时间戳>-<提交号>.tar.gz`：独立服务包，产品登记后的升级使用。
+
+产品与服务均为 `hkexCmdbSync`，不复用 `docc`、`douc` 等现有产品。首次安装上传 `-install.tar.gz`，无需额外人工创建产品归属。
 
 详细步骤见 [CMDB OMP 应用商店部署说明](docs/CMDB%20OMP%20应用商店部署说明.md)。
 
@@ -357,14 +361,16 @@ mvn package
   ├── git-commit-id-plugin    → git.commit.id.abbrev / git.commit.time
   ├── build-helper-maven-plugin → build.time
   ├── maven-jar-plugin        → thin jar
-  └── maven-assembly-plugin   → hkexCmdbSync-<版本>-<时间>-<提交>.tar.gz
+  └── maven-assembly-plugin
+      ├── hkexCmdbSync-<版本>-<时间>-<提交>.tar.gz
+      └── hkexCmdbSync-<版本>-<时间>-install.tar.gz
 ```
 
 ### 配置与流水线的关系
 
 | 构建来源 | 包内 conf/ | 说明 |
 |---|---|---|
-| 本地 `mvn package` | 只有非敏感运行配置 | 业务配置从 Nacos 密文加载 |
+| 本地 `mvn package` | 只有启动引导配置 | 业务配置从 Nacos 加载，仅 SN 登录凭据解密 |
 | CI `build-job` | 只有非敏感运行配置 | `nacos.params` 由 OMP 依赖通道生成，不进入制品 |
 
 ### 上线前工程侧还缺什么

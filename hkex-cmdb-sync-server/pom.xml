@@ -97,15 +97,19 @@
 
     <build>
         <resources>
-            <!--
-              application.yml 是 OmniAgent 插件形态（packaging/）的默认配置，
-              会被当成 jar 内置兜底打进制品；它的模板不进 jar，只在仓库里当参考。
-            -->
+            <!-- 本地只发布引导配置；完整应用配置在 Nacos，仅 SN 用户名和密码为密文。 -->
             <resource>
                 <directory>src/main/resources</directory>
                 <excludes>
                     <exclude>**/*.example</exclude>
+                    <exclude>application.yml</exclude>
                 </excludes>
+            </resource>
+            <resource>
+                <directory>conf</directory>
+                <includes>
+                    <include>application.properties</include>
+                </includes>
             </resource>
         </resources>
         <plugins>
@@ -138,18 +142,34 @@
                 <version>${maven-assembly-plugin.version}</version>
                 <configuration>
                     <appendAssemblyId>false</appendAssemblyId>
-                    <descriptors>
-                        <descriptor>src/main/assembly/assembly.xml</descriptor>
-                    </descriptors>
-                    <finalName>${final-tar-name}</finalName>
+                    <tarLongFileMode>gnu</tarLongFileMode>
                 </configuration>
                 <executions>
                     <execution>
-                        <id>make-assembly</id>
+                        <id>make-service-package</id>
                         <phase>package</phase>
                         <goals>
                             <goal>single</goal>
                         </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/assembly.xml</descriptor>
+                            </descriptors>
+                            <finalName>${final-tar-name}</finalName>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>make-product-package</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/omp-product.xml</descriptor>
+                            </descriptors>
+                            <finalName>${omp.product.name}-${project.version}-${build.time}-install</finalName>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

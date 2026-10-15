@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-    echo "usage: $0 <plaintext-json-file>" >&2
+if [ "$#" -ne 1 ] && ! { [ "$#" -eq 3 ] && [ "$1" = "--encrypt-only" ]; }; then
+    echo "usage: $0 <plaintext-json-file> | --encrypt-only <plaintext-json-file> <encrypted-json-file>" >&2
     exit 2
 fi
 
@@ -38,6 +38,16 @@ if [ -z "${NACOS_SERVER}" ] || [ -z "${NACOS_USERNAME}" ] \
     exit 3
 fi
 
+# Resolve file arguments before switching to the service directory.
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --encrypt-only) ARGS+=("$arg") ;;
+        /*) ARGS+=("$arg") ;;
+        *) ARGS+=("$PWD/$arg") ;;
+    esac
+done
+
 cd "${SERVICE_DIR}"
 JAVACMD=$(resolve_java17)
 exec "${JAVACMD}" \
@@ -46,4 +56,4 @@ exec "${JAVACMD}" \
     -DcwNacosPassword="${NACOS_PASSWORD}" \
     -DcwNacosNamespace="${NACOS_NAMESPACE}" \
     -classpath "${SERVICE_DIR}/lib/*" \
-    com.cloudwise.cmdb.config.remote.CmdbConfigPublisher "$1"
+    com.cloudwise.cmdb.config.remote.CmdbConfigPublisher "${ARGS[@]}"

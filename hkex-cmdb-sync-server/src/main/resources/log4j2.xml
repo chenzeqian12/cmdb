@@ -13,7 +13,7 @@
 
     <Properties>
         <!-- agentctl / run.sh 注入的绝对路径优先 -->
-        <Property name="LOG_HOME">${sys:cwLogRootPath:-logs}</Property>
+        <Property name="LOG_HOME">${sys:LOG_PATH:-${sys:cwLogRootPath:-logs}}</Property>
         <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n</Property>
     </Properties>
 
@@ -49,6 +49,10 @@
     </Appenders>
 
     <Loggers>
+        <!-- DOUC 注册中心 URL 包含解密后的密码，不能写入日志。 -->
+        <Logger name="org.apache.dubbo" level="OFF"/>
+        <Logger name="com.alibaba.nacos" level="OFF"/>
+        <Logger name="com.cloudwise.utils" level="OFF"/>
         <!-- 业务日志：文件全量留一份，控制台同步输出便于前台调试 -->
         <Logger name="com.cloudwise.cmdb" level="INFO" additivity="false">
             <AppenderRef ref="Console"/>
