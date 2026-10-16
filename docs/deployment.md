@@ -46,6 +46,11 @@ python3 -m unittest tests/test_omp_product_package.py
 
 1. 在 OMP 应用商店上传产品包。
 2. 创建服务实例，选择 Java 17 和 Nacos 依赖实例。
+   **Nacos 以集群部署时，依赖要选到集群**：脚本会把集群内全部节点的 `ip:service_port`
+   拼成逗号分隔的地址串写进 `CW_NACOS_SERVER`（Nacos 客户端的 `serverAddr` 就是这个格式）；
+   只选单个实例则退化成单地址。若环境里有多个 Nacos 实例，而依赖既没选集群、也没选具体实例，
+   安装会直接失败（`expected one nacos dependency instance, found N`）——这里不做猜测，
+   宁可不装也不连错。
 3. 安装脚本从 OMP `data_json` 读取 Nacos 地址、用户名、密码密文和命名空间。
 4. 脚本在安装目录生成 `conf/nacos.params` 和 `conf/omp.env`，文件权限为 `0600`。
 5. 发布完整业务配置后启动服务。
@@ -80,6 +85,11 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params <安装目录>/conf/omp.e
 ```
 
 这只是字段示意，实际文件不得省略其他配置。包含真实凭据的临时文件不得放入仓库、普通共享目录或日志。
+
+`server.port` 必须与 OMP 服务包声明的服务端口一致（当前服务包为 `18098`，以 `conf/hkexCmdbSync.yaml`
+的声明为准）。Nacos 配置以最高优先级
+注入环境，会盖住启动脚本传的 `-Dserver.port`：两边不一致时进程按 Nacos 里的值监听，而 OMP 的健康
+检查和监控按服务包端口探测，会直接判定服务不健康。改端口要同时改服务包和已发布的 Nacos JSON。
 
 首次发布建议：
 
@@ -119,17 +129,30 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params <安装目录>/conf/omp.e
 ```bash
 ./bin/hkexCmdbSync start
 ./bin/hkexCmdbSync status
-grep -E '远程配置|启动自检通过|ERROR' \
-  logs/start.log logs/hkex-cmdb-sync.log 2>/dev/null
+grep CMDB-STARTUP-CHECK /data/logs/hkexCmdbSync/hkex-cmdb-sync.log
 ```
+
+服务日志落在 OMP 声明的 log_dir（本文档示例为 `/data/logs/hkexCmdbSync`），路径由启动脚本以
+`-DcwLogRootPath` 注入，log4j2 优先采用它；Nacos 里的 `logging.file.path` 只在缺少该参数时兜底，
+**不要**把它写成 `./logs` 这类相对路径——那会按进程工作目录解析，把日志写进安装目录，
+看起来就像「服务在跑但没有日志」。启动脚本自身的 stderr 在同一个目录的 `start.log`：
+配置在日志系统初始化之前加载，读配置失败时业务日志一行都不会有，此时改看它。
 
 按以下顺序验收：
 
-1. 日志显示远程配置加载和启动自检成功。
-2. 调用 `POST /sync/groups/match-check`，确认生产用户匹配率。
-3. 调用 `POST /sync/groups?dryRun=true`，复核待建组、未匹配成员和待删除成员。
-4. 确认计划后将 `douc.dry-run` 改为 `false`，重新发布完整配置并重启。
-5. 仅在业务确认后启用进程内调度或 XXL-Job。
+1. 自检日志中的 `config-source=nacos group=hkex-cmdb-sync data-id=hkex-cmdb-sync-config.json`
+   表示配置确实从 Nacos 读到；显示 `local-only(NOT from Nacos)` 则说明 Group / Data ID 不对。
+2. `log-file=` 行给出日志实际落盘位置。若同时出现 `WARN log-dir mismatch`，说明 Nacos 的
+   `logging.file.path` 与 OMP 的 log_dir 不一致；日志以 OMP 的 log_dir 为准，把前者改成同一个
+   绝对路径或留空。
+3. 最后一行 `verdict` 说明本次启动后是否会自动同步、是否会写 DOUC；`write-mode=LIVE` 时前面会有 WARN。
+4. 通过服务端口执行 `GET /health`，正常应返回 HTTP 200 和 `{"status":"UP"}`；`GET /metrics` 应返回 Prometheus 文本。1.0.7 起按 OMP 的根路径约定提供这两个只读端点，不使用 `/actuator` 前缀。
+5. 调用 `POST /sync/groups/match-check`，确认生产用户匹配率。
+6. 调用 `POST /sync/groups?dryRun=true`，复核待建组、未匹配成员和待删除成员。
+7. 确认计划后将 `douc.dry-run` 改为 `false`，重新发布完整配置并重启。
+8. 仅在业务确认后启用进程内调度。
+
+管理端点只暴露健康和 Prometheus 指标，不开放 env、configprops、heapdump、restart 等端点。健康检查不展示组件或详情；健康贡献器异常时返回 503/DOWN，不伪装为成功。健康通过不代表 SN/DOUC 已完成接口联调或真实同步，端口仍须限制在受控网络内。
 
 日志中不应出现 ServiceNow 明文凭据、完整密文、Nacos 密码或 DOUC token。
 
