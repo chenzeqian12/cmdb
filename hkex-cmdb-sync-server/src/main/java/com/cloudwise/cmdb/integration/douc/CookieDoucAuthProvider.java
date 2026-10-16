@@ -31,7 +31,7 @@ public class CookieDoucAuthProvider extends AbstractDoucAuthProvider {
     public CookieDoucAuthProvider(DoucProperties properties) {
         super(properties);
         if (!StringUtils.hasText(properties.getCookie())) {
-            log.warn("未配置 douc.cookie，DOUC 接口调用会因缺少会话而失败");
+            log.warn("douc.cookie is not configured: DOUC calls will fail without a session");
         }
     }
 

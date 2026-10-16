@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,6 +44,9 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
     /** 未匹配成员在结果里保留的样本数量上限，避免响应体过大。 */
     private static final int UNMATCHED_SAMPLE_LIMIT = 50;
+
+    /** 日志里逐行列出的「成员有变动的组」数量上限，只用于看影响面。 */
+    private static final int CHANGED_GROUP_LOG_LIMIT = 10;
 
     private final ServiceNowClient serviceNowClient;
 
@@ -79,7 +83,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
         // ---------- 需求 1：建组 ----------
         Map<String, Long> existingGroups = doucClient.listGroupNameToId();
-        log.info("DOUC 现有组 {} 个，源端组 {} 个，dryRun={}",
+        log.info("DOUC has {} existing group(s), source has {} group(s), dryRun={}",
                 existingGroups.size(), sourceGroups.size(), result.isDryRun());
         Map<String, Long> groupIds = createMissingGroups(sourceGroups, existingGroups, result);
 
@@ -96,7 +100,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
         saveManagedGroups(sourceGroups, groupIds, result);
 
         result.setElapsedMillis(System.currentTimeMillis() - startedAt);
-        log.info("用户组同步结束，{}，耗时 {} ms", summary(result), result.getElapsedMillis());
+        log.info("User group sync finished, {}, elapsed {} ms", summary(result), result.getElapsedMillis());
         return result;
     }
 
@@ -116,7 +120,8 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             }
             Long currentGroupId = existingGroups.get(groupName);
             if (!Objects.equals(entry.getValue(), currentGroupId)) {
-                log.warn("跳过删除不再受本服务管理的 DOUC 组，name={}，记录 id={}，当前 id={}",
+                log.warn("Skipped deleting a DOUC group no longer managed by this service,"
+                                + " name={}, recorded id={}, current id={}",
                         groupName, entry.getValue(), currentGroupId);
                 continue;
             }
@@ -170,7 +175,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
         result.setInvalidRecordCount(invalid);
         if (invalid > 0) {
-            log.warn("丢弃 {} 条组名或用户标识为空的组员记录", invalid);
+            log.warn("Dropped {} member record(s) with a blank group name or user key", invalid);
         }
         return grouped;
     }
@@ -208,7 +213,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
                 ? doucProperties.getParentGroupId().trim()
                 : null;
         if (parentGroupId == null) {
-            log.info("douc.parent-group-id 为空，用户组将平铺在顶层创建");
+            log.info("douc.parent-group-id is empty: user groups will be created flat at the top level");
         }
 
         Set<String> created = new LinkedHashSet<>();
@@ -220,7 +225,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
                 // 单组失败不中断整体同步，记录后继续
                 result.getFailedGroups().add(groupName + " -> " + e.getMessage());
                 result.getCreatedGroups().remove(groupName);
-                log.error("创建 DOUC 用户组失败，name={}", groupName, e);
+                log.error("Failed to create the DOUC user group, name={}", groupName, e);
             }
         }
 
@@ -231,10 +236,10 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             for (String groupName : created) {
                 Long id = refreshed.get(groupName);
                 if (id == null) {
-                    result.getFailedGroups().add(groupName + " -> 建组后回查未找到该组");
+                    result.getFailedGroups().add(groupName + " -> not found on re-read after creation");
                 } else {
                     groupIds.put(groupName, id);
-                    log.info("已创建 DOUC 用户组，name={}，id={}", groupName, id);
+                    log.info("Created the DOUC user group, name={}, id={}", groupName, id);
                 }
             }
         }
@@ -273,7 +278,7 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
         result.setMatchedUserCount(matched);
         result.setUnmatchedUserCount(unmatched.size());
-        log.info("DOUC 用户 {} 条，索引 {} 项；源端 {} 个成员中匹配上 {} 个，未匹配 {} 个",
+        log.info("DOUC users={}, index entries={}; of {} source member(s) {} matched, {} unmatched",
                 doucUsers.size(), index.size(), sourceMembers.size(), matched, unmatched.size());
         return index;
     }
@@ -324,8 +329,8 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             if (groupId == null) {
                 // dryRun 时新建组还没有 ID；实跑时说明建组失败了
                 plan.setSkippedReason(result.isDryRun()
-                        ? "dryRun：组尚未创建，仅出成员计划"
-                        : "组未建立，跳过成员归类");
+                        ? "dryRun: the group has not been created yet, member plan only"
+                        : "the group does not exist, member resolution skipped");
                 continue;
             }
 
@@ -342,12 +347,34 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             existingIds.stream().filter(id -> !targetUserIds.contains(id)).forEach(plan.getToRemove()::add);
 
             if (result.isDryRun()) {
-                plan.setSkippedReason("dryRun，未写入");
+                plan.setSkippedReason("dryRun, nothing written");
                 continue;
             }
 
             doucClient.setGroupMembers(groupId, plan.getTargetUserIds());
             plan.setApplied(true);
+        }
+        logChangedGroups(result);
+    }
+
+    /**
+     * 成员变动最多的若干个组，便于一眼看出本次同步的影响面。
+     *
+     * <p>原先这段明细只打在 XXL-Job 的调度日志里（1.0.11.5 已移除 XXL-Job），
+     * 现在直接进业务日志，手工触发和定时触发看到的内容一致。</p>
+     */
+    private void logChangedGroups(GroupSyncResult result) {
+        List<String> changes = result.getMemberPlans().stream()
+                .filter(plan -> !plan.getToAdd().isEmpty() || !plan.getToRemove().isEmpty())
+                .sorted(Comparator.comparingInt(
+                                (GroupMemberPlan plan) -> plan.getToAdd().size() + plan.getToRemove().size())
+                        .reversed())
+                .limit(CHANGED_GROUP_LOG_LIMIT)
+                .map(plan -> plan.getGroupName() + " add=" + plan.getToAdd().size()
+                        + " remove=" + plan.getToRemove().size())
+                .toList();
+        if (!changes.isEmpty()) {
+            log.info("Groups with member changes (up to {}): {}", CHANGED_GROUP_LOG_LIMIT, changes);
         }
     }
 
@@ -369,18 +396,18 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
     private String summary(GroupSyncResult result) {
         Map<String, Object> parts = new LinkedHashMap<>();
-        parts.put("源记录", result.getSourceRecordCount());
-        parts.put("脏记录", result.getInvalidRecordCount());
-        parts.put("源组", result.getSourceGroupCount());
-        parts.put("新建组", result.getCreatedGroups().size());
-        parts.put("已存在组", result.getExistingGroups().size());
-        parts.put("失败组", result.getFailedGroups().size());
-        parts.put("待删组", result.getGroupsToDelete().size());
-        parts.put("已删组", result.getDeletedGroups().size());
+        parts.put("sourceRecords", result.getSourceRecordCount());
+        parts.put("invalidRecords", result.getInvalidRecordCount());
+        parts.put("sourceGroups", result.getSourceGroupCount());
+        parts.put("groupsCreated", result.getCreatedGroups().size());
+        parts.put("groupsExisting", result.getExistingGroups().size());
+        parts.put("groupsFailed", result.getFailedGroups().size());
+        parts.put("groupsToDelete", result.getGroupsToDelete().size());
+        parts.put("groupsDeleted", result.getDeletedGroups().size());
         if (result.isMemberSyncExecuted()) {
-            parts.put("匹配用户", result.getMatchedUserCount());
-            parts.put("未匹配", result.getUnmatchedUserCount());
-            parts.put("处理组数", result.getMemberPlans().size());
+            parts.put("membersMatched", result.getMatchedUserCount());
+            parts.put("membersUnmatched", result.getUnmatchedUserCount());
+            parts.put("groupsPlanned", result.getMemberPlans().size());
         }
         return parts.toString();
     }

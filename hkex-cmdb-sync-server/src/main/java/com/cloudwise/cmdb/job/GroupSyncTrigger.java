@@ -13,15 +13,16 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 用户组同步的**自动触发点**（进程内，不依赖 XXL-Job）。两个触发时机：
+ * 用户组同步的**自动触发点**，全部在进程内完成，不依赖任何外部调度中心。两个触发时机：
  *
  * <ol>
  *   <li><b>服务每次启动后</b>跑一次 —— 由 {@code hkex.sync.on-startup} 控制；</li>
  *   <li><b>每日定时</b>跑一次 —— 由 {@code hkex.sync.cron} 控制，默认每天凌晨 3 点。</li>
  * </ol>
  *
- * <p>与 {@link GroupSyncJob} 的区别：那个走 XXL-Job，cron 在管理后台配；这个的触发条件
- * <b>就写在 conf/application.yml 里</b>，现场不接调度中心也能自己跑。</p>
+ * <p>1.0.11.5 起服务不再接入 XXL-Job：原来的 {@code hkexCmdbGroupSyncJob} 处理器已删除，
+ * 每日同步只由本类的 {@code @Scheduled} 负责，触发条件和 cron <b>都写在 Nacos 配置里</b>
+ * （见下面这段），改时间不用动代码，也不用去任何后台登记任务。</p>
  *
  * <pre>
  * hkex:
@@ -47,7 +48,7 @@ import org.springframework.stereotype.Component;
 public class GroupSyncTrigger {
 
     /** 统一日志关键字，便于在日志平台按项目检索。 */
-    private static final String TAG = "【HKEX-CMDB同步】";
+    private static final String TAG = "[HKEX-CMDB-SYNC]";
 
     private final GroupSyncService groupSyncService;
 
@@ -87,11 +88,11 @@ public class GroupSyncTrigger {
     @EventListener(ApplicationReadyEvent.class)
     public void syncOnStartup() {
         if (!onStartup) {
-            log.info("{}服务已就绪；启动同步已关闭（hkex.sync.on-startup=false）", TAG);
+            log.info("{}service is ready; startup sync is disabled (hkex.sync.on-startup=false)", TAG);
             return;
         }
-        log.info("{}服务已就绪，{} 秒后执行一次启动同步。"
-                        + "不想每次重启都同步就设 hkex.sync.on-startup=false",
+        log.info("{}service is ready, running one startup sync in {} seconds."
+                        + " Set hkex.sync.on-startup=false to skip it on every restart",
                 TAG, startupDelaySeconds);
         taskScheduler.schedule(this::runOnce, Instant.now().plusSeconds(startupDelaySeconds));
     }
@@ -112,25 +113,27 @@ public class GroupSyncTrigger {
      */
     private void runOnce() {
         long startedAt = System.currentTimeMillis();
-        log.info("{}自动同步开始（memberSync={}）", TAG, memberSync);
+        log.info("{}scheduled sync started (memberSync={})", TAG, memberSync);
         try {
             GroupSyncResult result = groupSyncService.sync(null, memberSync, true);
-            log.info("{}自动同步结束，{}，耗时 {} ms",
+            log.info("{}scheduled sync finished, {}, elapsed {} ms",
                     TAG, summarize(result), System.currentTimeMillis() - startedAt);
             if (!result.getFailedGroups().isEmpty()) {
-                log.error("{}自动同步存在失败的用户组 {}，请检查 douc 接口与网络",
+                log.error("{}scheduled sync left failed user groups {}, check the DOUC API and network",
                         TAG, result.getFailedGroups());
             }
         } catch (Exception e) {
-            log.error("{}自动同步失败。DOUC 或 ServiceNow 可能不可达，本次未完成，下次触发时重试。", TAG, e);
+            log.error("{}scheduled sync failed. DOUC or ServiceNow may be unreachable;"
+                    + " this run did not complete and will be retried on the next trigger", TAG, e);
         }
     }
 
     /** 一行汇总，格式与手工触发时的日志保持一致，便于同一套检索规则覆盖所有情况。 */
     private String summarize(GroupSyncResult result) {
         return String.format(
-                "{源记录=%d, 脏记录=%d, 源组=%d, 新建组=%d, 已存在组=%d, 失败组=%d, "
-                        + "匹配用户=%d, 未匹配=%d, dryRun=%s}",
+                "{sourceRecords=%d, invalidRecords=%d, sourceGroups=%d, groupsCreated=%d,"
+                        + " groupsExisting=%d, groupsFailed=%d, membersMatched=%d, membersUnmatched=%d,"
+                        + " dryRun=%s}",
                 result.getSourceRecordCount(), result.getInvalidRecordCount(),
                 result.getSourceGroupCount(), result.getCreatedGroups().size(),
                 result.getExistingGroups().size(), result.getFailedGroups().size(),

@@ -77,15 +77,17 @@ public class ServiceNowClient {
                     });
 
             if (response == null || response.getResult() == null) {
-                log.warn("ServiceNow 组员接口返回空结果，query={}", properties.getGroupQuery());
+                log.warn("ServiceNow group member query returned no results, query={}",
+                        properties.getGroupQuery());
                 return Collections.emptyList();
             }
-            log.info("ServiceNow 组员拉取完成，记录数={}", response.getResult().size());
+            log.info("ServiceNow group members fetched, records={}", response.getResult().size());
             return response.getResult();
         } catch (IntegrationException e) {
             throw e;
         } catch (Exception e) {
-            throw new IntegrationException("拉取 ServiceNow 用户组成员失败，query=" + properties.getGroupQuery(), e);
+            throw new IntegrationException(
+                    "Failed to fetch ServiceNow group members, query=" + properties.getGroupQuery(), e);
         }
     }
 
@@ -131,21 +133,21 @@ public class ServiceNowClient {
                     .retrieve()
                     .body(SnTokenResponse.class);
         } catch (Exception e) {
-            throw new IntegrationException("换取 ServiceNow Access Token 失败", e);
+            throw new IntegrationException("Failed to exchange the ServiceNow access token", e);
         }
 
         // ServiceNow 换 token 失败时仍可能返回 HTTP 200，需要按响应体判断
         if (response == null || !StringUtils.hasText(response.getAccessToken())) {
             String detail = response == null
-                    ? "响应为空"
+                    ? "empty response body"
                     : response.getError() + " / " + response.getErrorDescription();
-            throw new IntegrationException("换取 ServiceNow Access Token 失败：" + detail);
+            throw new IntegrationException("Failed to exchange the ServiceNow access token: " + detail);
         }
 
         long ttlSeconds = Math.max(0, response.getExpiresIn() - properties.getTokenRefreshAheadSeconds());
         cachedToken = response.getAccessToken();
         tokenExpireAtMillis = System.currentTimeMillis() + ttlSeconds * 1000L;
-        log.info("ServiceNow Access Token 已刷新，有效期 {} 秒", response.getExpiresIn());
+        log.info("ServiceNow access token refreshed, expires in {} seconds", response.getExpiresIn());
         return cachedToken;
     }
 }

@@ -49,7 +49,6 @@ INNER_LOG_DIR="${CW_INSTALL_LOGS_DIR}"
 INNER_DATA_DIR="${CW_INSTALL_DATA_DIR}"
 INNER_SERVICE_PORT="${CW_SERVICE_PORT}"
 INNER_METRICS_PORT="${CW_METRICS_PORT}"
-INNER_XXLJOBEXE_PORT="${CW_XXLJOBEXE_PORT}"
 INNER_NACOS_SERVER="${CW_NACOS_SERVER}"
 INNER_NACOS_USERNAME="${CW_NACOS_USERNAME}"
 INNER_NACOS_PASSWORD="${CW_NACOS_PASSWORD}"
@@ -152,7 +151,6 @@ if [ -n "${HEAP_SIZE}" ]; then
 fi
 [ -n "${INNER_SERVICE_PORT}" ]   && JVM_OPTS="${JVM_OPTS} -Dserver.port=${INNER_SERVICE_PORT}"
 [ -n "${INNER_METRICS_PORT}" ]    && JVM_OPTS="${JVM_OPTS} -DcwMetricsPort=${INNER_METRICS_PORT}"
-[ -n "${INNER_XXLJOBEXE_PORT}" ]  && JVM_OPTS="${JVM_OPTS} -DcwXxlJobExecutorPort=${INNER_XXLJOBEXE_PORT}"
 if [ -n "${NACOS_SERVER}" ]; then
     if [ -z "${NACOS_USERNAME}" ] || [ -z "${NACOS_PASSWORD}" ] || [ -z "${NACOS_NAMESPACE}" ]; then
         echo "Nacos bootstrap parameters are incomplete"
@@ -197,7 +195,7 @@ start_inside() {
     if [ "$(alive)" -eq 0 ]; then
         echo "${APP_NAME} [running]" | column -t
     elif [ "${FOREGROUND}" -eq 1 ]; then
-        echo "前台启动 profile=${SPRING_PROFILE} workdir=${APP_HOME}"
+        echo "starting in the foreground, profile=${SPRING_PROFILE} workdir=${APP_HOME}"
         cd "${APP_HOME}" && exec ${JAVACMD} ${JVM_OPTS} -classpath "${CW_CLASSPATH}" ${MAIN_CLASS}
     else
         cd "${APP_HOME}"
@@ -206,7 +204,7 @@ start_inside() {
         echo $! >"${APP_PID_FILE}"
         sleep 1
         status
-        echo "日志：${APP_LOG_DIR}/start.log"
+        echo "start script stderr: ${APP_LOG_DIR}/start.log"
     fi
 }
 

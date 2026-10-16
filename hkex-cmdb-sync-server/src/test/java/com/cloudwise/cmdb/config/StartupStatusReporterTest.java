@@ -28,8 +28,6 @@ class StartupStatusReporterTest {
 
     private DoucProperties douc;
 
-    private XxlJobConfig xxlJob;
-
     @BeforeEach
     void setUp() {
         properties = new LinkedHashMap<>();
@@ -54,10 +52,6 @@ class StartupStatusReporterTest {
         douc.setBaseUrl("http://10.9.9.9:18241");
         douc.setAuthMode("direct");
         douc.setDryRun(true);
-
-        xxlJob = new XxlJobConfig();
-        xxlJob.setAppName("hkex-cmdb-sync");
-        xxlJob.setPort(18599);
     }
 
     @Test
@@ -137,18 +131,16 @@ class StartupStatusReporterTest {
     }
 
     @Test
-    @DisplayName("XXL-Job 调度中心地址为空时给告警，配了就不告警")
-    void reportWarnsWhenXxlJobAdminAddressIsMissing() {
-        Assertions.assertThat(String.join("\n", report(true)))
-                .contains("WARN xxl.job.admin.address is empty")
-                .contains("xxl-job admin-address=MISSING access-token=absent executor-app=hkex-cmdb-sync"
-                        + " executor-port=18599");
+    @DisplayName("Nacos 里残留 xxl 配置时给告警，删干净后不再出现 XXL 相关行")
+    void reportWarnsWhenXxlJobConfigIsLeftBehind() {
+        properties.put("xxl.job.admin.address", "http://xxl.example.com:8080/xxl-job-admin");
 
-        xxlJob.setAdminAddresses("http://xxl.example.com:8080/xxl-job-admin");
-        xxlJob.setAccessToken("token");
         Assertions.assertThat(String.join("\n", report(true)))
-                .doesNotContain("WARN xxl.job.admin.address is empty")
-                .contains("admin-address=http://xxl.example.com:8080/xxl-job-admin access-token=present");
+                .contains("WARN xxl.* is still set in the Nacos config but XXL-Job has been removed")
+                .contains("Delete the xxl section");
+
+        properties.remove("xxl.job.admin.address");
+        Assertions.assertThat(String.join("\n", report(true))).doesNotContain("xxl");
     }
 
     @Test
@@ -159,7 +151,6 @@ class StartupStatusReporterTest {
         douc.setCookie("cookie-should-not-appear");
         douc.setAppKey("app-key-should-not-appear");
         douc.setAppSecret("app-secret-should-not-appear");
-        xxlJob.setAccessToken("xxl-token-should-not-appear");
 
         String report = String.join("\n", report(true));
 
@@ -168,8 +159,7 @@ class StartupStatusReporterTest {
                 .doesNotContain("sn-password-should-not-appear")
                 .doesNotContain("cookie-should-not-appear")
                 .doesNotContain("app-key-should-not-appear")
-                .doesNotContain("app-secret-should-not-appear")
-                .doesNotContain("xxl-token-should-not-appear");
+                .doesNotContain("app-secret-should-not-appear");
         Assertions.assertThat(report)
                 .contains("credentials servicenow-username=present servicenow-password=present"
                         + " douc-cookie=present douc-app-key=present douc-app-secret=present");
@@ -240,6 +230,6 @@ class StartupStatusReporterTest {
                     CmdbRemoteConfigInitializer.PROPERTY_SOURCE_NAME, Collections.emptyMap()));
         }
         return new StartupStatusReporter(
-                new StaticApplicationContext(), environment, serviceNow, douc, xxlJob).buildLines();
+                new StaticApplicationContext(), environment, serviceNow, douc).buildLines();
     }
 }

@@ -57,10 +57,31 @@ class CmdbRemoteConfigBinderTest {
                 .containsEntry("server.port", 19080)
                 .containsEntry("logging.file.path", "./remote-logs")
                 .containsEntry("logging.level.com.cloudwise.cmdb", "DEBUG")
-                .containsEntry("xxl.job.accessToken", "dummy-token")
-                .containsEntry("xxl.job.executor.log.retention.days", 10)
                 .containsEntry("hkex.sync.scheduled-enabled", false)
                 .containsEntry("hkex.heartbeat.file", "./remote-heartbeat");
+    }
+
+    @Test
+    @DisplayName("Nacos 里残留的 xxl 段被忽略而不是拒绝启动")
+    void leftoverXxlJobConfigIsTolerated() throws Exception {
+        // 1.0.11.5 移除了 XXL-Job。现场 Nacos 通常还没删这一段，取值也不再合法（端口写成 -1），
+        // 但只要它还在就拒绝启动，服务会卡在配置加载阶段且业务日志为空，现场无法定位。
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        ((ObjectNode) document.withObject("/xxl/job/executor")).put("port", -1);
+        ((ObjectNode) document.withObject("/xxl/job")).put("accessToken", "");
+        Assertions.assertThat(bind(document.toString()).properties())
+                .containsEntry("server.port", 19080)
+                .containsEntry("hkex.sync.scheduled-enabled", false);
+    }
+
+    @Test
+    @DisplayName("删掉 xxl 段后配置仍然完整可用")
+    void documentWithoutXxlSectionStillBinds() throws Exception {
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        document.remove("xxl");
+        Assertions.assertThat(bind(document.toString()).properties())
+                .doesNotContainKey("xxl.job.accessToken")
+                .containsEntry("hkex.sync.scheduled-enabled", false);
     }
 
     @Test
@@ -98,12 +119,10 @@ class CmdbRemoteConfigBinderTest {
     @ValueSource(strings = {
             "/server/port=\"not-a-port\"", "/server/port=70000",
             "/hkex/sync/on-startup=\"not-a-boolean\"", "/hkex/heartbeat/interval-seconds=0",
-            "/hkex/sync/cron=\"invalid-cron\"", "/xxl/job/executor/port=-1",
-            "/xxl/job/executor/log/retention/days=2147483648",
-            "/server/port=\"\"", "/xxl/job/executor/port=\"\"",
+            "/hkex/sync/cron=\"invalid-cron\"",
+            "/server/port=\"\"",
             "/hkex/sync/on-startup=\"\"", "/hkex/sync/startup-delay-seconds=\"\"",
-            "/server/shutdown=\"\"", "/spring/jackson/default-property-inclusion=\"\"",
-            "/xxl/job/executor/log/retention/days=\"\""
+            "/server/shutdown=\"\"", "/spring/jackson/default-property-inclusion=\"\""
     })
     void invalidApplicationValuesFailBeforeEncryption(String replacement) throws Exception {
         ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());

@@ -14,7 +14,7 @@
 
     <groupId>com.cloudwise</groupId>
     <artifactId>hkex-cmdb-sync</artifactId>
-    <version>1.0.11.3</version>
+    <version>1.0.11.5</version>
     <name>hkex-cmdb-sync</name>
     <description>HKEX ServiceNow CMDB to Cloudwise DOUC/EMP data synchronization</description>
 

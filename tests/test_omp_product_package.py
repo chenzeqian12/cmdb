@@ -77,7 +77,7 @@ class ProductArchiveTests(unittest.TestCase):
         packages = list((SERVER / 'target').glob(SERVICE + '-*-install.tar.gz'))
         self.assertTrue(packages, 'Maven 未生成产品包')
         package = max(packages, key=lambda p: p.stat().st_mtime)
-        self.assertRegex(package.name, r'^hkexCmdbSync-\d+\.\d+\.\d+-\d{14}-install\.tar\.gz$')
+        self.assertRegex(package.name, r'^hkexCmdbSync-\d+(?:\.\d+)+-\d{14}-install\.tar\.gz$')
         with tarfile.open(package) as outer:
             files = [m.name for m in outer.getmembers() if m.isfile()]
             product_yaml = SERVICE + '/' + SERVICE + '.yaml'
@@ -86,7 +86,7 @@ class ProductArchiveTests(unittest.TestCase):
             self.assertEqual(len(inner_names), 1)
             self.assertEqual(set(files), {product_yaml, service_yaml, inner_names[0]})
             name = Path(inner_names[0]).name
-            match = re.fullmatch(r'hkexCmdbSync-(\d+\.\d+\.\d+)-(\d{14})-([0-9a-f]+)\.tar\.gz', name)
+            match = re.fullmatch(r'hkexCmdbSync-(\d+(?:\.\d+)+)-(\d{14})-([0-9a-f]+)\.tar\.gz', name)
             self.assertIsNotNone(match)
             product = outer.extractfile(product_yaml).read().decode()
             service = outer.extractfile(service_yaml).read()

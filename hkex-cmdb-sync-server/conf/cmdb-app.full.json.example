@@ -14,18 +14,6 @@
       "com.cloudwise.utils": "OFF"
     }
   },
-  "xxl": {
-    "job": {
-      "admin": { "address": "" },
-      "accessToken": "",
-      "executor": {
-        "app": { "name": "hkex-cmdb-sync" },
-        "port": 18599,
-        "log": { "path": "./logs/jobhandler", "retention": { "days": 7 } },
-        "ip": ""
-      }
-    }
-  },
   "hkex": {
     "sync": {
       "scheduled-enabled": false,

@@ -50,7 +50,7 @@ public class SyncController {
         try {
             return ApiResponse.ok(groupSyncService.sync(dryRun, members, members));
         } catch (Exception e) {
-            log.error("用户组同步失败", e);
+            log.error("User group sync failed", e);
             return ApiResponse.fail(e.getMessage());
         }
     }
@@ -65,7 +65,7 @@ public class SyncController {
         try {
             return ApiResponse.ok(groupSyncService.sync(true, false, true));
         } catch (Exception e) {
-            log.error("匹配率校验失败", e);
+            log.error("Match-rate check failed", e);
             return ApiResponse.fail(e.getMessage());
         }
     }
@@ -80,7 +80,7 @@ public class SyncController {
         try {
             return ApiResponse.ok(doucClient.listGroupNameToId());
         } catch (Exception e) {
-            log.error("查询 DOUC 组树失败", e);
+            log.error("Failed to load the DOUC group tree", e);
             return ApiResponse.fail(e.getMessage());
         }
     }
@@ -95,7 +95,7 @@ public class SyncController {
         try {
             return ApiResponse.ok(doucClient.listGroups());
         } catch (Exception e) {
-            log.error("查询 DOUC 组树失败", e);
+            log.error("Failed to load the DOUC group tree", e);
             return ApiResponse.fail(e.getMessage());
         }
     }

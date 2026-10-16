@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
 public class ConfigValidator {
 
     /** 统一日志关键字，便于在日志平台按项目检索。 */
-    private static final String TAG = "【HKEX-CMDB同步】";
+    private static final String TAG = "[HKEX-CMDB-SYNC]";
 
     private static final String AUTH_MODE_DIRECT = "direct";
 
@@ -61,20 +61,20 @@ public class ConfigValidator {
             require(missing, "douc.app-key", douc.getAppKey());
             require(missing, "douc.app-secret", douc.getAppSecret());
         } else if (!AUTH_MODE_DIRECT.equals(authMode)) {
-            missing.add("douc.auth-mode（当前值 " + authMode + "，只能是 direct / apim / cookie）");
+            missing.add("douc.auth-mode (current value " + authMode + ", must be one of direct / apim / cookie)");
         }
 
         if (!missing.isEmpty()) {
-            log.error("{}启动自检失败，缺少 {} 项必需配置：{}。"
-                            + "请检查 Nacos 中的 CMDB 配置及 ServiceNow 凭据密文并重新发布",
+            log.error("{}startup check failed: {} required value(s) missing: {}."
+                            + " Check the CMDB config in Nacos and the ServiceNow credential ciphertext, then republish",
                     TAG, missing.size(), missing);
-            throw new IllegalStateException("缺少必需配置：" + missing);
+            throw new IllegalStateException("Missing required configuration: " + missing);
         }
 
         // userId 单独打出来：它决定 /user/list 的可见范围，填错不报错只会让匹配率归零，
         // 出问题时第一个要核对的就是这个值。
-        log.info("{}启动自检通过。DOUC={}{}，认证方式={}，accountId={}，userId={}，dryRun={}，"
-                        + "ServiceNow={}",
+        log.info("{}startup check passed. douc={}{} auth-mode={} account-id={} user-id={} dry-run={}"
+                        + " servicenow={}",
                 TAG,
                 douc.getBaseUrl(),
                 douc.getGatewayPrefix(),
@@ -84,7 +84,8 @@ public class ConfigValidator {
                 douc.isDryRun(),
                 serviceNow.getBaseUrl());
         if (douc.isDryRun()) {
-            log.info("{}当前为试运行模式，只计算差异不写入 DOUC。确认计划无误后再设 douc.dry-run=false", TAG);
+            log.info("{}dry-run is ON: diffs are computed but nothing is written to DOUC."
+                    + " Set douc.dry-run=false once the plan is confirmed", TAG);
         }
     }
 

@@ -52,7 +52,7 @@ public class FileGroupSyncStateStore implements GroupSyncStateStore {
             Map<String, Long> groups = objectMapper.readValue(stateFile.toFile(), GROUPS_TYPE);
             return groups == null ? new LinkedHashMap<>() : new LinkedHashMap<>(groups);
         } catch (IOException e) {
-            throw new IntegrationException("读取 DOUC 同步组快照失败，路径=" + stateFile, e);
+            throw new IntegrationException("Failed to read the DOUC group snapshot, path=" + stateFile, e);
         }
     }
 
@@ -67,8 +67,8 @@ public class FileGroupSyncStateStore implements GroupSyncStateStore {
             Files.move(temporaryFile, stateFile,
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            throw new IntegrationException("保存 DOUC 同步组快照失败，路径=" + stateFile, e);
+            throw new IntegrationException("Failed to save the DOUC group snapshot, path=" + stateFile, e);
         }
-        log.info("已保存 DOUC 同步组快照，组数={}，路径={}", groups.size(), stateFile);
+        log.info("Saved the DOUC group snapshot, groups={}, path={}", groups.size(), stateFile);
     }
 }

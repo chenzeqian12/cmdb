@@ -57,9 +57,9 @@ public class ApimDoucAuthProvider extends AbstractDoucAuthProvider {
         if (!StringUtils.hasText(properties.getAppKey()) || !StringUtils.hasText(properties.getAppSecret())) {
             // 快速失败：配了 apim 模式却没给凭证，任何请求都会 401，不如启动就说清楚
             throw new IntegrationException(
-                    "douc.auth-mode=apim 但未配置 douc.app-key / douc.app-secret");
+                    "douc.auth-mode=apim but douc.app-key / douc.app-secret are not configured");
         }
-        log.info("DOUC 认证方式：APIM 应用签名（appKey={}，签名算法={}）",
+        log.info("DOUC auth mode: APIM application signature (appKey={}, sign-mode={})",
                 properties.getAppKey(), properties.getSignMode());
     }
 

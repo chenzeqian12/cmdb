@@ -8,7 +8,7 @@
     <parent>
         <artifactId>hkex-cmdb-sync</artifactId>
         <groupId>com.cloudwise</groupId>
-        <version>1.0.11.3</version>
+        <version>1.0.11.5</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -96,11 +96,6 @@
             <artifactId>bcprov-jdk18on</artifactId>
         </dependency>
 
-        <!-- 定时任务，与 docc 用同一套 XXL-Job。版本由 inf-bom 管理。 -->
-        <dependency>
-            <groupId>com.xuxueli</groupId>
-            <artifactId>xxl-job-core</artifactId>
-        </dependency>
     </dependencies>
 
     <build>

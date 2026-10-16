@@ -65,7 +65,8 @@ stat -c '%a %U %G %n' <安装目录>/conf/nacos.params <安装目录>/conf/omp.e
 
 ## 4. 准备业务配置
 
-复制 `hkex-cmdb-sync-server/conf/cmdb-app.full.json.example` 到受控临时目录，填写全部七段配置。Nacos 固定位置为：
+复制 `hkex-cmdb-sync-server/conf/cmdb-app.full.json.example` 到受控临时目录，填写全部六段配置
+（`spring`、`server`、`logging`、`hkex`、`servicenow`、`douc`）。Nacos 固定位置为：
 
 | 项目 | 值 |
 | --- | --- |
@@ -145,12 +146,15 @@ grep CMDB-STARTUP-CHECK /data/logs/hkexCmdbSync/hkex-cmdb-sync.log
 2. `log-file=` 行给出日志实际落盘位置。若同时出现 `WARN log-dir mismatch`，说明 Nacos 的
    `logging.file.path` 与 OMP 的 log_dir 不一致；日志以 OMP 的 log_dir 为准，把前者改成同一个
    绝对路径或留空。
-3. 最后一行 `verdict` 说明本次启动后是否会自动同步、是否会写 DOUC；`write-mode=LIVE` 时前面会有 WARN。
-4. 通过服务端口执行 `GET /health`，正常应返回 HTTP 200 和 `{"status":"UP"}`；`GET /metrics` 应返回 Prometheus 文本。1.0.7 起按 OMP 的根路径约定提供这两个只读端点，不使用 `/actuator` 前缀。
-5. 调用 `POST /sync/groups/match-check`，确认生产用户匹配率。
-6. 调用 `POST /sync/groups?dryRun=true`，复核待建组、未匹配成员和待删除成员。
-7. 确认计划后将 `douc.dry-run` 改为 `false`，重新发布完整配置并重启。
-8. 仅在业务确认后启用进程内调度。
+3. 出现 `WARN xxl.* is still set in the Nacos config` 表示 Nacos 里还留着已废弃的 `xxl` 段
+   （1.0.11.5 起每日同步改由进程内定时器负责，不再接入 XXL-Job）。该段已被忽略、不影响启动，
+   但应删掉；确认删除后这行 WARN 随即消失。
+4. 最后一行 `verdict` 说明本次启动后是否会自动同步、是否会写 DOUC；`write-mode=LIVE` 时前面会有 WARN。
+5. 通过服务端口执行 `GET /health`，正常应返回 HTTP 200 和 `{"status":"UP"}`；`GET /metrics` 应返回 Prometheus 文本。1.0.7 起按 OMP 的根路径约定提供这两个只读端点，不使用 `/actuator` 前缀。
+6. 调用 `POST /sync/groups/match-check`，确认生产用户匹配率。
+7. 调用 `POST /sync/groups?dryRun=true`，复核待建组、未匹配成员和待删除成员。
+8. 确认计划后将 `douc.dry-run` 改为 `false`，重新发布完整配置并重启。
+9. 仅在业务确认后启用进程内调度。
 
 管理端点只暴露健康和 Prometheus 指标，不开放 env、configprops、heapdump、restart 等端点。健康检查不展示组件或详情；健康贡献器异常时返回 503/DOWN，不伪装为成功。健康通过不代表 SN/DOUC 已完成接口联调或真实同步，端口仍须限制在受控网络内。
 

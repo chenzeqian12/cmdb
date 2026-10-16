@@ -397,7 +397,7 @@ class GroupSyncServiceImplTest {
         GroupMemberPlan plan = planOf(result, "Broken_SUP");
         Assertions.assertThat(plan.getGroupId()).isNull();
         Assertions.assertThat(plan.isApplied()).isFalse();
-        Assertions.assertThat(plan.getSkippedReason()).contains("组未建立");
+        Assertions.assertThat(plan.getSkippedReason()).contains("does not exist");
         Mockito.verify(doucClient, Mockito.never()).setGroupMembers(ArgumentMatchers.anyLong(), ArgumentMatchers.anyList());
     }
 
@@ -435,7 +435,7 @@ class GroupSyncServiceImplTest {
 
         GroupSyncResult result = service.sync(false, true, true);
 
-        Assertions.assertThat(planOf(result, "Broken_SUP").getSkippedReason()).contains("组未建立");
+        Assertions.assertThat(planOf(result, "Broken_SUP").getSkippedReason()).contains("does not exist");
     }
 
     @Test

@@ -31,7 +31,7 @@ import org.springframework.stereotype.Component;
 public class PluginHeartbeatWriter {
 
     /** 统一日志关键字，便于在日志平台按项目检索。 */
-    private static final String TAG = "【HKEX-CMDB同步】";
+    private static final String TAG = "[HKEX-CMDB-SYNC]";
 
     private final Path heartbeatFile;
 
@@ -57,7 +57,8 @@ public class PluginHeartbeatWriter {
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             // 心跳写不出去不致命（服务仍在正常工作），但要让运维在日志里看得到。
-            log.error("{}写入插件心跳失败，路径={}。底座可能误判插件不健康。", TAG, heartbeatFile, e);
+            log.error("{}failed to write plugin heartbeat, path={}; the platform may mark the plugin unhealthy",
+                    TAG, heartbeatFile, e);
         }
     }
 
@@ -69,7 +70,7 @@ public class PluginHeartbeatWriter {
         try {
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            log.warn("{}清理心跳临时文件失败，路径={}", TAG, tempFile, e);
+            log.warn("{}failed to delete the heartbeat temp file, path={}", TAG, tempFile, e);
         }
     }
 }

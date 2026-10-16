@@ -19,12 +19,22 @@ public class CmdbRemoteConfigBinder {
     private static final Set<String> APPLICATION_FIELDS = Set.of(
             "spring.application.name", "spring.jackson.default-property-inclusion",
             "server.port", "server.shutdown", "logging.file.path",
-            "xxl.job.admin.address", "xxl.job.accessToken", "xxl.job.executor.app.name",
-            "xxl.job.executor.port", "xxl.job.executor.log.path",
-            "xxl.job.executor.log.retention.days", "xxl.job.executor.ip",
             "hkex.sync.scheduled-enabled", "hkex.sync.on-startup",
             "hkex.sync.startup-delay-seconds", "hkex.sync.cron", "hkex.sync.member-sync",
             "hkex.heartbeat.enabled", "hkex.heartbeat.file", "hkex.heartbeat.interval-seconds");
+
+    /**
+     * 已移除的 XXL-Job 配置项。1.0.11.5 起每日同步改由进程内定时器负责（见
+     * {@code GroupSyncTrigger}），这些字段一律不生效。
+     *
+     * <p>仍然放行而不是判为「不支持」：现场 Nacos 配置里通常还留着这一段，
+     * 若直接拒绝，服务会卡在配置加载阶段起不来（日志系统尚未初始化），
+     * 现场只能看到一条 stderr，很难定位。放行后由启动自检打 WARN 提示删除。</p>
+     */
+    public static final Set<String> DEPRECATED_XXL_KEYS = Set.of(
+            "xxl.job.admin.address", "xxl.job.accessToken", "xxl.job.executor.app.name",
+            "xxl.job.executor.port", "xxl.job.executor.log.path",
+            "xxl.job.executor.log.retention.days", "xxl.job.executor.ip");
 
     private static final Set<String> SERVICENOW_FIELDS = Set.of(
             "base-url", "token-path", "client-id", "client-secret",
@@ -158,12 +168,14 @@ public class CmdbRemoteConfigBinder {
             }
             boolean isLoggingLevel = key.startsWith("logging.level.")
                     && key.length() > "logging.level.".length();
-            if (!APPLICATION_FIELDS.contains(key) && !isLoggingLevel) {
+            boolean isDeprecated = DEPRECATED_XXL_KEYS.contains(key);
+            if (!APPLICATION_FIELDS.contains(key) && !isLoggingLevel && !isDeprecated) {
                 throw new IllegalStateException("CMDB configuration contains unsupported field: " + key);
             }
             if (value == null || value instanceof List<?>) {
                 throw new IllegalStateException("CMDB configuration field must be scalar: " + key);
             }
+            // 已废弃字段只做形状检查，不校验取值：现场留着的旧值不该再挡住启动
             if (isLoggingLevel) {
                 validateLoggingLevel(key, value);
             }
@@ -193,11 +205,9 @@ public class CmdbRemoteConfigBinder {
 
     private void validateApplicationValues(Map<String, Object> properties) {
         Binder binder = new Binder(List.of(new MapConfigurationPropertySource(properties)));
-        for (String key : List.of("server.port", "xxl.job.executor.port")) {
-            int port = requiredValue(binder, key, Integer.class);
-            if (port < 0 || port > 65535) {
-                throw new IllegalStateException("port must be between 0 and 65535: " + key);
-            }
+        int port = requiredValue(binder, "server.port", Integer.class);
+        if (port < 0 || port > 65535) {
+            throw new IllegalStateException("port must be between 0 and 65535: server.port");
         }
         for (String key : List.of("hkex.sync.scheduled-enabled", "hkex.sync.on-startup",
                 "hkex.sync.member-sync", "hkex.heartbeat.enabled")) {
@@ -208,9 +218,6 @@ public class CmdbRemoteConfigBinder {
             if (value < 0 || (key.equals("hkex.heartbeat.interval-seconds") && value == 0)) {
                 throw new IllegalStateException("invalid time interval: " + key);
             }
-        }
-        if (requiredValue(binder, "xxl.job.executor.log.retention.days", Integer.class) < 0) {
-            throw new IllegalStateException("invalid XXL log retention days");
         }
         requiredValue(binder, "server.shutdown", org.springframework.boot.web.server.Shutdown.class);
         requiredValue(binder, "spring.jackson.default-property-inclusion", com.fasterxml.jackson.annotation.JsonInclude.Include.class);

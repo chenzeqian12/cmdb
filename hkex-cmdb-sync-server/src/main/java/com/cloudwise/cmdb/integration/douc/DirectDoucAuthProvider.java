@@ -42,8 +42,9 @@ public class DirectDoucAuthProvider extends AbstractDoucAuthProvider {
 
     public DirectDoucAuthProvider(DoucProperties properties) {
         super(properties);
-        log.warn("DOUC 认证方式：直连不加认证（{}）。此方式仅适用于能直连 DOUC 服务端口的内网部署，"
-                + "请确认这是预期内的。", properties.getBaseUrl());
+        log.warn("DOUC auth mode: direct, no authentication ({}). This is only appropriate for an internal"
+                + " deployment that can reach the DOUC service port directly; make sure this is intended.",
+                properties.getBaseUrl());
     }
 
     @Override

@@ -77,7 +77,7 @@ public class DoucClient {
                 .body(new ParameterizedTypeReference<DoucResponse<List<DoucGroup>>>() {
                 });
 
-        requireSuccess(response, "查询 DOUC 组树");
+        requireSuccess(response, "list the DOUC group tree");
         return response.getData() == null ? new ArrayList<>() : response.getData();
     }
 
@@ -99,7 +99,7 @@ public class DoucClient {
             if (StringUtils.hasText(group.getName())) {
                 Long previous = sink.putIfAbsent(group.getName(), group.getId());
                 if (previous != null) {
-                    log.warn("DOUC 中存在同名组，name={}，已保留 id={}，忽略 id={}",
+                    log.warn("Duplicate group name in DOUC, name={}: keeping id={}, ignoring id={}",
                             group.getName(), previous, group.getId());
                 }
             }
@@ -134,10 +134,10 @@ public class DoucClient {
 
         if (response != null && response.getCode() != null
                 && response.getCode() == CODE_GROUP_NAME_DUPLICATED) {
-            log.debug("DOUC 同级已存在同名组，跳过创建，name={}", name);
+            log.debug("A group with this name already exists on the same level, creation skipped, name={}", name);
             return false;
         }
-        requireSuccess(response, "创建 DOUC 用户组 " + name);
+        requireSuccess(response, "create the DOUC user group " + name);
         return true;
     }
 
@@ -175,13 +175,13 @@ public class DoucClient {
 
             current++;
             if (current > MAX_USER_PAGES) {
-                log.warn("DOUC 用户分页达到上限 {} 页，提前结束，已拉取 {} 条；"
-                        + "若用户总数确实超过 {}，需调大上限",
+                log.warn("DOUC user paging hit the {} page limit and stopped early, {} record(s) fetched;"
+                        + " if the real user count exceeds {}, raise the limit",
                         MAX_USER_PAGES, users.size(), (long) MAX_USER_PAGES * DOUC_USER_PAGE_MAX);
                 break;
             }
         }
-        log.info("DOUC 用户拉取完成，共 {} 条", users.size());
+        log.info("DOUC users fetched, total={}", users.size());
         return users;
     }
 
@@ -215,7 +215,7 @@ public class DoucClient {
                 .body(new ParameterizedTypeReference<DoucResponse<DoucUserPage>>() {
                 });
 
-        requireSuccess(response, "分页查询 DOUC 用户，current=" + current);
+        requireSuccess(response, "page DOUC users, current=" + current);
         return response.getData();
     }
 
@@ -235,7 +235,7 @@ public class DoucClient {
                 .body(new ParameterizedTypeReference<DoucResponse<List<DoucGroupMember>>>() {
                 });
 
-        requireSuccess(response, "查询组内成员，groupId=" + groupId);
+        requireSuccess(response, "list group members, groupId=" + groupId);
         return response.getData() == null ? new ArrayList<>() : response.getData();
     }
 
@@ -254,10 +254,11 @@ public class DoucClient {
      */
     public void setGroupMembers(Long groupId, List<Long> userIdList) {
         if (groupId == null) {
-            throw new IntegrationException("设置组内成员失败：groupId 不能为空");
+            throw new IntegrationException("Cannot set group members: groupId must not be null");
         }
         if (userIdList == null) {
-            throw new IntegrationException("设置组内成员失败：userIdList 不能为 null，清空成员请传空列表");
+            throw new IntegrationException("Cannot set group members: userIdList must not be null;"
+                    + " pass an empty list to clear all members");
         }
 
         DoucResponse<Void> response = restClient.post()
@@ -270,8 +271,8 @@ public class DoucClient {
                 .body(new ParameterizedTypeReference<DoucResponse<Void>>() {
                 });
 
-        requireSuccess(response, "设置组内成员，groupId=" + groupId + "，成员数=" + userIdList.size());
-        log.info("已设置 DOUC 组 {} 的成员，共 {} 人", groupId, userIdList.size());
+        requireSuccess(response, "set group members, groupId=" + groupId + ", members=" + userIdList.size());
+        log.info("Set members of DOUC group {}, count={}", groupId, userIdList.size());
     }
 
     /**
@@ -293,8 +294,8 @@ public class DoucClient {
                 .body(new ParameterizedTypeReference<DoucResponse<Void>>() {
                 });
 
-        requireSuccess(response, "删除 DOUC 用户组，groupId=" + groupId);
-        log.info("已删除 DOUC 用户组 id={}", groupId);
+        requireSuccess(response, "delete the DOUC user group, groupId=" + groupId);
+        log.info("Deleted DOUC user group id={}", groupId);
     }
 
     private String buildUri(String path) {
@@ -303,10 +304,10 @@ public class DoucClient {
 
     private void requireSuccess(DoucResponse<?> response, String action) {
         if (response == null) {
-            throw new IntegrationException(action + " 失败：响应为空");
+            throw new IntegrationException("Failed to " + action + ": empty response");
         }
         if (!response.isSuccess()) {
-            throw new IntegrationException(action + " 失败：" + response.describeFailure());
+            throw new IntegrationException("Failed to " + action + ": " + response.describeFailure());
         }
     }
 }

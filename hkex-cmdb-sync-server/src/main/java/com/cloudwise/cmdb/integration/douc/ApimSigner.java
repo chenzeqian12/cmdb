@@ -61,7 +61,7 @@ public final class ApimSigner {
             case MODE_SHA256 -> digest("SHA-256", payload);
             case MODE_SM3 -> sm3(payload);
             default -> throw new IntegrationException(
-                    "不支持的签名算法 douc.sign-mode=" + signMode + "，可选 sm3 / md5 / sha256");
+                    "Unsupported signature algorithm: douc.sign-mode=" + signMode + ", expected sm3 / md5 / sha256");
         };
     }
 
@@ -71,7 +71,7 @@ public final class ApimSigner {
             byte[] hash = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
             return Hex.toHexString(hash);
         } catch (NoSuchAlgorithmException e) {
-            throw new IntegrationException("当前 JVM 不支持摘要算法 " + algorithm, e);
+            throw new IntegrationException("This JVM does not support digest algorithm " + algorithm, e);
         }
     }
 

@@ -1,5 +1,6 @@
 package com.cloudwise.cmdb.config;
 
+import com.cloudwise.cmdb.config.remote.CmdbRemoteConfigBinder;
 import com.cloudwise.cmdb.config.remote.CmdbRemoteConfigInitializer;
 import java.security.CodeSource;
 import java.util.ArrayList;
@@ -62,19 +63,15 @@ public class StartupStatusReporter {
 
     private final DoucProperties douc;
 
-    private final XxlJobConfig xxlJob;
-
     public StartupStatusReporter(
             ApplicationContext applicationContext,
             ConfigurableEnvironment environment,
             ServiceNowProperties serviceNow,
-            DoucProperties douc,
-            XxlJobConfig xxlJob) {
+            DoucProperties douc) {
         this.applicationContext = applicationContext;
         this.environment = environment;
         this.serviceNow = serviceNow;
         this.douc = douc;
-        this.xxlJob = xxlJob;
     }
 
     /**
@@ -128,10 +125,6 @@ public class StartupStatusReporter {
                 + " on-startup=" + onStartup
                 + " startup-delay-seconds=" + startupDelay
                 + " member-sync=" + booleanValue("hkex.sync.member-sync", true));
-        lines.add(TAG + " xxl-job admin-address=" + orMissing(xxlJob.getAdminAddresses())
-                + " access-token=" + presence(xxlJob.getAccessToken())
-                + " executor-app=" + orMissing(xxlJob.getAppName())
-                + " executor-port=" + xxlJob.getPort());
         lines.add(TAG + " heartbeat enabled=" + booleanValue("hkex.heartbeat.enabled", true)
                 + " file=" + textValue("hkex.heartbeat.file", MISSING)
                 + " interval-seconds=" + longValue("hkex.heartbeat.interval-seconds", 30));
@@ -161,9 +154,9 @@ public class StartupStatusReporter {
             notices.add(TAG + " WARN dry-run=false with scheduled-enabled=true:"
                     + " the daily cron job also writes to DOUC");
         }
-        if (!StringUtils.hasText(xxlJob.getAdminAddresses())) {
-            notices.add(TAG + " WARN xxl.job.admin.address is empty: the executor will NOT register with the"
-                    + " scheduler, so hkexCmdbGroupSyncJob cannot be triggered from the XXL-Job console");
+        String leftoverXxl = leftoverXxlJobConfigNotice();
+        if (leftoverXxl != null) {
+            notices.add(leftoverXxl);
         }
         String logDirMismatch = logDirMismatchNotice();
         if (logDirMismatch != null) {
@@ -282,6 +275,24 @@ public class StartupStatusReporter {
                 + "\" differs from cwLogRootPath=" + ompLogDir + "; logs go to " + effectiveLogDir()
                 + " (cwLogRootPath wins). Set logging.file.path to the same absolute path,"
                 + " or leave it blank.";
+    }
+
+    /**
+     * Nacos 里还留着 xxl.* 配置时的提醒。
+     *
+     * <p>XXL-Job 已在 1.0.11.5 移除，改由进程内定时器（见 {@code GroupSyncTrigger}）负责每日同步。
+     * 为了不让「Nacos 没删干净」直接把服务卡在启动阶段，配置校验对残留的 xxl 段是放行的、
+     * 只是不生效；放行就必须说清楚，否则现场会以为调度中心还在起作用。</p>
+     */
+    private String leftoverXxlJobConfigNotice() {
+        for (String key : CmdbRemoteConfigBinder.DEPRECATED_XXL_KEYS) {
+            if (StringUtils.hasText(environment.getProperty(key))) {
+                return TAG + " WARN xxl.* is still set in the Nacos config but XXL-Job has been removed;"
+                        + " it is ignored. Delete the xxl section — the daily sync now runs on the"
+                        + " in-process scheduler controlled by hkex.sync.cron";
+            }
+        }
+        return null;
     }
 
     private boolean booleanValue(String key, boolean defaultValue) {

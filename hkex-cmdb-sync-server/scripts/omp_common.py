@@ -85,7 +85,8 @@ def dependency_instances(instance, records, service_name):
                 .format(service_name, len(matched)))
         return matched
     raise ValueError(
-        "OMP data_json 未提供 {} 依赖实例；conf/hkexCmdbSync.yaml 的 dependencies 必须声明该服务"
+        "OMP data_json has no instance for the {} dependency;"
+        " the dependencies section of conf/hkexCmdbSync.yaml must declare that service"
         .format(service_name))
 
 
@@ -110,7 +111,7 @@ def nacos_connection(instance, records):
         host = nacos.get("ip")
         port = indexed_values(nacos.get("ports")).get("service_port")
         if not host or not port:
-            raise ValueError("Nacos 依赖缺少安装参数: CW_NACOS_SERVER")
+            raise ValueError("Nacos dependency is missing the install parameter: CW_NACOS_SERVER")
         addresses.append("{}:{}".format(host, port))
     install_args = indexed_values(nacos_instances[0].get("install_args"))
     values = {
@@ -122,7 +123,7 @@ def nacos_connection(instance, records):
     }
     missing = [key for key in NACOS_PARAM_KEYS if not values[key]]
     if missing:
-        raise ValueError("Nacos 依赖缺少安装参数: {}".format(", ".join(missing)))
+        raise ValueError("Nacos dependency is missing install parameters: {}".format(", ".join(missing)))
     return values
 
 

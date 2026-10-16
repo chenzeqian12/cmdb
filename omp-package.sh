@@ -39,7 +39,8 @@ with tarfile.open(package) as archive:
     if len(nested) != 1 or set(names) != {product_yaml, service_yaml, nested[0]}:
         raise SystemExit('产品包必须包含产品定义、内嵌服务包和同名子目录下的服务定义')
     name = pathlib.Path(nested[0]).name
-    match = re.fullmatch(r'hkexCmdbSync-(\d+\.\d+\.\d+)-(\d{14})-([0-9a-f]+)\.tar\.gz', name)
+    # 版本号允许三段或多段（如 1.0.11.4）：现场按尾号顺延版本，这里不能只认 x.y.z
+    match = re.fullmatch(r'hkexCmdbSync-(\d+(?:\.\d+)+)-(\d{14})-([0-9a-f]+)\.tar\.gz', name)
     if match is None or (expected_version and match[1] != expected_version):
         raise SystemExit('服务包命名或版本不符合交付约定')
     service_package = target / name
