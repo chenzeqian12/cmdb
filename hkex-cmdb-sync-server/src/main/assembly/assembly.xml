@@ -63,8 +63,7 @@
             <directory>${project.basedir}/../docs</directory>
             <outputDirectory>docs</outputDirectory>
             <includes>
-                <include>CMDB Nacos DOUC 配置部署指南.md</include>
-                <include>CMDB OMP 应用商店部署说明.md</include>
+                <include>deployment.md</include>
             </includes>
             <fileMode>644</fileMode>
         </fileSet>

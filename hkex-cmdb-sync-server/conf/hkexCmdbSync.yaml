@@ -11,7 +11,7 @@ ports:
   - name: CMDB 同步服务端口
     protocol: TCP
     key: service_port
-    default: 18081
+    default: 18098
     editable: false
 monitor:
   process_name: CmdbSyncApplication

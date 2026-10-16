@@ -64,6 +64,12 @@ class ProductDefinitionTests(unittest.TestCase):
         scripts = next(s for s in sets if s.findtext('a:outputDirectory', namespaces=NS) == 'scripts')
         self.assertIn('**/__pycache__/**', [e.text for e in scripts.findall('a:excludes/a:exclude', NS)])
 
+    def test_service_assembly_includes_current_deployment_guide(self):
+        assembly = ET.parse(SERVER / 'src/main/assembly/assembly.xml')
+        docs = next(s for s in assembly.findall('a:fileSets/a:fileSet', NS)
+                    if s.findtext('a:outputDirectory', namespaces=NS) == 'docs')
+        self.assertIn('deployment.md', [e.text for e in docs.findall('a:includes/a:include', NS)])
+
 
 @unittest.skipUnless(os.environ.get('OMP_CHECK_ARTIFACTS') == '1', '需先完成 Maven package')
 class ProductArchiveTests(unittest.TestCase):
@@ -98,8 +104,17 @@ class ProductArchiveTests(unittest.TestCase):
                 self.assertIn('product-name=' + SERVICE + '\n', properties)
                 for required in ('scripts/install.py', 'scripts/upgrade.py', 'scripts/rollback.py',
                                  'bin/hkexCmdbSync', 'bin/publishCmdbConfig', 'bin/java17.sh',
-                                 'conf/application.properties'):
+                                 'conf/application.properties', 'docs/deployment.md'):
                     self.assertIn(SERVICE + '/' + required, names)
+                monitoring = inner.extractfile(SERVICE + '/conf/application.properties').read().decode()
+                for setting in ('management.endpoints.web.base-path=/',
+                                'management.endpoints.web.path-mapping.prometheus=metrics',
+                                'management.endpoints.web.exposure.include=health,prometheus',
+                                'management.endpoint.health.show-details=never',
+                                'management.endpoint.health.show-components=never'):
+                    self.assertIn(setting, monitoring)
+                self.assertTrue(any('/lib/spring-boot-actuator-' in n for n in names))
+                self.assertTrue(any('/lib/micrometer-registry-prometheus-' in n for n in names))
                 self.assertTrue(any('/lib/hkex-cmdb-sync-server-' in n for n in names))
                 for n in names:
                     self.assertNotRegex(n, r'__pycache__|\.pyc$|\.DS_Store|nacos\.params|omp\.env|application-(dev|prod|local)\.(yml|properties)$')

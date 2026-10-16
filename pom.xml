@@ -14,7 +14,7 @@
 
     <groupId>com.cloudwise</groupId>
     <artifactId>hkex-cmdb-sync</artifactId>
-    <version>1.0.6</version>
+    <version>1.0.11</version>
     <name>hkex-cmdb-sync</name>
     <description>HKEX ServiceNow CMDB to Cloudwise DOUC/EMP data synchronization</description>
 
@@ -29,6 +29,15 @@
         <maven.compiler.target>17</maven.compiler.target>
         <douc.sdk.version>7.1.0</douc.sdk.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!--
+          Log4j2 版本。父 POM inf-bom 自己定义了这个属性（3.0.0 里是 2.25.3），并用它
+          import org.apache.logging.log4j:log4j-bom。子工程重新声明同名属性即可把
+          整条 log4j（api/core/slf4j2-impl/jul）一起拉到指定版本，不需要逐个 artifact 加
+          dependencyManagement —— log4j-bom 里是一组配套版本，单独升级 core 会和 api 错配。
+        -->
+        <log4j2.version>2.26.1</log4j2.version>
+
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <!-- 与 docc 保持一致：checkstyle 配置从云端刷新，失败时回落到仓库里的 checkstyle/checkStyle.xml -->

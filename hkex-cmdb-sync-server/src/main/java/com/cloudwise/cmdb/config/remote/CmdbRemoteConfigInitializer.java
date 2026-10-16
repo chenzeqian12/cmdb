@@ -12,7 +12,11 @@ import org.springframework.core.env.MapPropertySource;
 
 public class CmdbRemoteConfigInitializer implements EnvironmentPostProcessor, Ordered {
 
-    static final String PROPERTY_SOURCE_NAME = "cmdbNacosDoucRemoteConfig";
+    /**
+     * 远程配置的属性源名称。启动自检（{@code StartupStatusReporter}）据此判断配置是否真的来自 Nacos，
+     * 所以对包外可见。
+     */
+    public static final String PROPERTY_SOURCE_NAME = "cmdbNacosDoucRemoteConfig";
 
     private final SnapshotLoader snapshotLoader;
 

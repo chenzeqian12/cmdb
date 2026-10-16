@@ -3,7 +3,7 @@
     "application": { "name": "hkex-cmdb-sync" },
     "jackson": { "default-property-inclusion": "non_null" }
   },
-  "server": { "port": 18081, "shutdown": "graceful" },
+  "server": { "port": 18098, "shutdown": "graceful" },
   "logging": {
     "file": { "path": "./logs" },
     "level": {

@@ -59,7 +59,12 @@ def indexed_values(items):
     return values
 
 
-def dependency_instance(instance, records, service_name):
+def dependency_instances(instance, records, service_name):
+    """按 OMP 的 dependence 声明定位被依赖服务的实例列表。
+
+    对齐 hkexConfigSyncServer/scripts/Core.py 的解析方式：先按 instance_name 精确匹配，
+    没有再按 cluster_name 匹配；只有明确指定集群时才允许多个实例。
+    """
     candidates = [record for record in records if record.get("name") == service_name]
     for dependency in instance.get("dependence") or []:
         if dependency.get("name") != service_name:
@@ -74,12 +79,14 @@ def dependency_instance(instance, records, service_name):
                        if record.get("cluster_name") == cluster_name]
         else:
             matched = candidates
-        if len(matched) != 1:
+        if not matched or (len(matched) != 1 and (instance_name or not cluster_name)):
             raise ValueError(
-                "expected one {} dependency instance, found {}; check OMP dependence"
+                "expected one {} dependency instance, found {}; check the OMP dependence record"
                 .format(service_name, len(matched)))
-        return matched[0]
-    raise ValueError("OMP data_json 未提供 {} 依赖实例".format(service_name))
+        return matched
+    raise ValueError(
+        "OMP data_json 未提供 {} 依赖实例；conf/hkexCmdbSync.yaml 的 dependencies 必须声明该服务"
+        .format(service_name))
 
 
 def require_absolute(value, name):
@@ -91,13 +98,23 @@ def require_absolute(value, name):
 
 
 def nacos_connection(instance, records):
-    nacos = dependency_instance(instance, records, NACOS_SERVICE_NAME)
-    ports = indexed_values(nacos.get("ports"))
-    install_args = indexed_values(nacos.get("install_args"))
-    host = nacos.get("ip")
-    port = ports.get("service_port")
+    """从 OMP 依赖通道取 Nacos 连接参数。
+
+    Nacos 以集群部署时 dependence 声明 cluster_name，这里把所有节点拼成逗号分隔的地址串
+    （Nacos 客户端的 serverAddr 本身就是这个格式），单实例时退化成原来的单地址。
+    其余参数取集群首个节点：同一集群内 username / password_enc / namespace 一致。
+    """
+    nacos_instances = dependency_instances(instance, records, NACOS_SERVICE_NAME)
+    addresses = []
+    for nacos in nacos_instances:
+        host = nacos.get("ip")
+        port = indexed_values(nacos.get("ports")).get("service_port")
+        if not host or not port:
+            raise ValueError("Nacos 依赖缺少安装参数: CW_NACOS_SERVER")
+        addresses.append("{}:{}".format(host, port))
+    install_args = indexed_values(nacos_instances[0].get("install_args"))
     values = {
-        "CW_NACOS_SERVER": "{}:{}".format(host, port) if host and port else "",
+        "CW_NACOS_SERVER": ",".join(addresses),
         "CW_NACOS_USERNAME": install_args.get("username", ""),
         # password_enc 原样落盘；明文只在 JVM 内解开。
         "CW_NACOS_PASSWORD": install_args.get("password_enc", ""),
@@ -114,7 +131,7 @@ def get_parameters(args):
     instance = find_instance(records, SERVICE_NAME, args.local_ip)
     values = indexed_values(instance.get("install_args"))
     ports = indexed_values(instance.get("ports"))
-    values["service_port"] = ports.get("service_port", "18081")
+    values["service_port"] = ports.get("service_port", "18098")
     values["base_dir"] = require_absolute(values.get("base_dir"), "base_dir")
     values["log_dir"] = require_absolute(values.get("log_dir"), "log_dir")
     values["run_user"] = values.get("run_user") or DEFAULT_RUN_USER
