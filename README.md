@@ -32,7 +32,7 @@ DOUC `/group/distribute` 是全量覆盖接口。传入的必须是该组完整�
 | Data ID | `hkex-cmdb-sync-config.json` |
 | 格式 | 完整 JSON |
 
-JSON 包含 `spring`、`server`、`logging`、`xxl`、`hkex`、`servicenow`、`douc` 七段。只有以下两个 ServiceNow 登录字段使用 DOUC 密文：
+JSON 包含 `spring`、`server`、`logging`、`hkex`、`servicenow`、`douc` 六段。只有以下两个 ServiceNow 登录字段使用 DOUC 密文：
 
 - `servicenow.username-encrypted`
 - `servicenow.password-encrypted`
@@ -79,10 +79,10 @@ python3 -m unittest tests/test_omp_product_package.py
 
 ## 调度方式
 
-支持两种调度，同一环境只应启用一种：
-
-- 进程内调度：由 `hkex.sync.scheduled-enabled`、`on-startup` 和 `cron` 控制。
-- XXL-Job：`JobHandler` 为 `hkexCmdbGroupSyncJob`，cron 在 XXL-Job 后台配置。
+同步只有进程内调度一种，由 `hkex.sync.scheduled-enabled`、`on-startup` 和 `cron` 控制，
+改时间不用动代码、也不用去任何调度后台登记任务。1.0.11.5 起不再接入 XXL-Job：
+原来的 `hkexCmdbGroupSyncJob` 处理器已删除，Nacos 配置里残留的 `xxl` 段会被忽略，
+启动自检会打一条 WARN 提示删除。
 
 写入开关始终由 `douc.dry-run` 控制。新环境应保持 `true`，完成匹配率和变更计划复核后再切换。
 
