@@ -5,7 +5,7 @@
   },
   "server": { "port": 18098, "shutdown": "graceful" },
   "logging": {
-    "file": { "path": "./logs" },
+    "file": { "path": "/data/logs/hkexCmdbSync" },
     "level": {
       "root": "INFO",
       "com.cloudwise.cmdb": "INFO",

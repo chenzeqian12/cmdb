@@ -6,14 +6,21 @@
     后台启动时 stdout/stderr 被重定向到 logs/app.out.log、logs/app.err.log，
     若没有文件 appender，日志只走 console —— 滚动归档、ERROR 单独一份这些都没了。
 
-  日志目录：启动脚本传 -DcwLogRootPath=<插件目录>/logs 注入，
-            取不到时回落到 CWD 下的相对路径 logs/（IDE 里直接跑也能用）。
+  日志目录取值顺序（顺序不能反，现场踩过）：
+    1. cwLogRootPath —— 启动脚本注入，值就是 OMP 声明的 log_dir（/data/logs/hkexCmdbSync）。
+    2. LOG_PATH      —— Spring Boot 由配置项 logging.file.path 生成的系统属性。
+    3. logs/         —— 相对 CWD，只在 IDE 里直接跑、两个属性都没有时用。
+
+  为什么 cwLogRootPath 必须优先：Nacos 里 logging.file.path 配的相对路径（如 "./logs"）会被
+  Spring Boot 变成 LOG_PATH=./logs，按进程工作目录解析就是安装目录 /data/app/hkexCmdbSync/logs。
+  结果是服务日志写进安装目录，而运维采集、交付文档、排障习惯看的是 OMP 的 log_dir，
+  表现成「服务明明在跑却没有任何日志」。日志目录以 OMP 的 log_dir 为准，Nacos 那个值只当兜底。
 -->
 <Configuration status="WARN">
 
     <Properties>
-        <!-- agentctl / run.sh 注入的绝对路径优先 -->
-        <Property name="LOG_HOME">${sys:LOG_PATH:-${sys:cwLogRootPath:-logs}}</Property>
+        <!-- OMP 的 log_dir 优先；Nacos 的 logging.file.path 仅在缺少前者时兜底 -->
+        <Property name="LOG_HOME">${sys:cwLogRootPath:-${sys:LOG_PATH:-logs}}</Property>
         <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n</Property>
     </Properties>
 

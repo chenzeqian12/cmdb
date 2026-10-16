@@ -215,9 +215,10 @@ public class CmdbRemoteConfigBinder {
         requiredValue(binder, "server.shutdown", org.springframework.boot.web.server.Shutdown.class);
         requiredValue(binder, "spring.jackson.default-property-inclusion", com.fasterxml.jackson.annotation.JsonInclude.Include.class);
         org.springframework.scheduling.support.CronExpression.parse(requiredValue(binder, "hkex.sync.cron", String.class));
-        if (requiredValue(binder, "logging.file.path", String.class).isBlank()) {
-            throw new IllegalStateException("logging.file.path must not be empty");
-        }
+        // logging.file.path 不校验、允许为空：真正决定日志目录的是启动脚本注入的 cwLogRootPath
+        // （见 log4j2.xml），Nacos 这个值只在缺前者时兜底。强制非空只会逼现场填一个相对路径，
+        // 万一 cwLogRootPath 缺失就把日志写到进程工作目录下，反而更难排查。
+        // 两者同时存在且不一致时，启动自检会打 WARN，见 StartupStatusReporter。
     }
 
     private <T> T requiredValue(Binder binder, String key, Class<T> type) {

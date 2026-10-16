@@ -45,6 +45,15 @@ public class StartupStatusReporter {
     /** 必填项为空时的占位，便于和「配了个空字符串」区分。 */
     private static final String MISSING = "MISSING";
 
+    /** 启动脚本注入的日志根目录（OMP 的 log_dir），log4j2.xml 里优先级最高。 */
+    private static final String CW_LOG_ROOT_PROPERTY = "cwLogRootPath";
+
+    /** Spring Boot 由配置项 logging.file.path 生成的系统属性，只在缺少上面那个时兜底。 */
+    private static final String BOOT_LOG_PATH_PROPERTY = "LOG_PATH";
+
+    /** 业务日志文件名，log4j2.xml 里写死的名字。 */
+    private static final String LOG_FILE_NAME = "/hkex-cmdb-sync.log";
+
     private final ApplicationContext applicationContext;
 
     private final ConfigurableEnvironment environment;
@@ -126,7 +135,8 @@ public class StartupStatusReporter {
         lines.add(TAG + " heartbeat enabled=" + booleanValue("hkex.heartbeat.enabled", true)
                 + " file=" + textValue("hkex.heartbeat.file", MISSING)
                 + " interval-seconds=" + longValue("hkex.heartbeat.interval-seconds", 30));
-        lines.add(TAG + " log-file=" + logFile());
+        lines.add(TAG + " log-file=" + effectiveLogDir() + LOG_FILE_NAME
+                + " source=" + logDirSource());
         lines.addAll(notices(dryRun, scheduledEnabled, onStartup, startupDelay));
         lines.add(TAG + " verdict " + verdict(dryRun, scheduledEnabled, onStartup, startupDelay));
         return lines;
@@ -154,6 +164,10 @@ public class StartupStatusReporter {
         if (!StringUtils.hasText(xxlJob.getAdminAddresses())) {
             notices.add(TAG + " WARN xxl.job.admin.address is empty: the executor will NOT register with the"
                     + " scheduler, so hkexCmdbGroupSyncJob cannot be triggered from the XXL-Job console");
+        }
+        String logDirMismatch = logDirMismatchNotice();
+        if (logDirMismatch != null) {
+            notices.add(logDirMismatch);
         }
         if (scheduledEnabled && !onStartup) {
             notices.add(TAG + " NOTE on-startup=false: this restart does NOT run a sync;"
@@ -225,11 +239,49 @@ public class StartupStatusReporter {
     }
 
     /**
-     * 日志落盘位置，直接回答现场「日志在哪」。
+     * 实际生效的日志根目录。取值顺序与 log4j2.xml 的 LOG_HOME 严格一致，
+     * 否则自检说的路径和日志真正落盘的位置会不一致 —— 那正是最误导人的情况。
+     *
+     * @return 生效的目录；两个属性都没有时返回相对路径 logs
      */
-    private String logFile() {
-        String root = System.getProperty("cwLogRootPath");
-        return StringUtils.hasText(root) ? root + "/hkex-cmdb-sync.log" : "logs/hkex-cmdb-sync.log";
+    private String effectiveLogDir() {
+        String ompLogDir = System.getProperty(CW_LOG_ROOT_PROPERTY);
+        if (StringUtils.hasText(ompLogDir)) {
+            return ompLogDir;
+        }
+        String bootLogPath = System.getProperty(BOOT_LOG_PATH_PROPERTY);
+        return StringUtils.hasText(bootLogPath) ? bootLogPath : "logs";
+    }
+
+    /**
+     * 生效目录是从哪来的，便于一眼看出是 OMP 的 log_dir 还是 Nacos 配置。
+     */
+    private String logDirSource() {
+        if (StringUtils.hasText(System.getProperty(CW_LOG_ROOT_PROPERTY))) {
+            return "cwLogRootPath";
+        }
+        if (StringUtils.hasText(System.getProperty(BOOT_LOG_PATH_PROPERTY))) {
+            return BOOT_LOG_PATH_PROPERTY + "(Nacos logging.file.path, relative to the working directory)";
+        }
+        return "default(relative to the working directory)";
+    }
+
+    /**
+     * 日志目录的两个来源都被设置、取值却不一致时的提醒。
+     * 现场真出现过：Nacos 配了 {@code logging.file.path: "./logs"}，日志全写进安装目录，
+     * 而交付文档让人去 OMP 的 log_dir 里找，表现为「服务在跑但没有日志」。
+     */
+    private String logDirMismatchNotice() {
+        String ompLogDir = System.getProperty(CW_LOG_ROOT_PROPERTY);
+        String bootLogPath = System.getProperty(BOOT_LOG_PATH_PROPERTY);
+        if (!StringUtils.hasText(ompLogDir) || !StringUtils.hasText(bootLogPath)
+                || ompLogDir.equals(bootLogPath)) {
+            return null;
+        }
+        return TAG + " WARN log-dir mismatch: Nacos logging.file.path=\"" + bootLogPath
+                + "\" differs from cwLogRootPath=" + ompLogDir + "; logs go to " + effectiveLogDir()
+                + " (cwLogRootPath wins). Set logging.file.path to the same absolute path,"
+                + " or leave it blank.";
     }
 
     private boolean booleanValue(String key, boolean defaultValue) {

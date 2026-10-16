@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -172,6 +173,56 @@ class StartupStatusReporterTest {
         Assertions.assertThat(report)
                 .contains("credentials servicenow-username=present servicenow-password=present"
                         + " douc-cookie=present douc-app-key=present douc-app-secret=present");
+    }
+
+    @Test
+    @DisplayName("自检报的日志路径与 log4j2 实际取值一致：cwLogRootPath 优先，并提示不一致")
+    void reportShowsOmpLogDirWhenStartScriptInjectsIt() {
+        System.setProperty("cwLogRootPath", "/data/logs/hkexCmdbSync");
+        System.setProperty("LOG_PATH", "./logs");
+
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("log-file=/data/logs/hkexCmdbSync/hkex-cmdb-sync.log source=cwLogRootPath")
+                .contains("WARN log-dir mismatch: Nacos logging.file.path=\"./logs\""
+                        + " differs from cwLogRootPath=/data/logs/hkexCmdbSync")
+                .contains("logs go to /data/logs/hkexCmdbSync (cwLogRootPath wins)");
+    }
+
+    @Test
+    @DisplayName("只有 Nacos 的 logging.file.path 时，如实说明日志落在工作目录下")
+    void reportFallsBackToBootLogPath() {
+        System.setProperty("LOG_PATH", "./logs");
+
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("log-file=./logs/hkex-cmdb-sync.log source=LOG_PATH(Nacos logging.file.path,"
+                        + " relative to the working directory)")
+                .doesNotContain("WARN log-dir mismatch");
+    }
+
+    @Test
+    @DisplayName("两个来源都没有时回落到工作目录下的相对 logs")
+    void reportFallsBackToRelativeLogs() {
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("log-file=logs/hkex-cmdb-sync.log"
+                        + " source=default(relative to the working directory)");
+    }
+
+    @Test
+    @DisplayName("两个来源取值一致时不告警")
+    void reportDoesNotWarnWhenLogDirsAgree() {
+        System.setProperty("cwLogRootPath", "/data/logs/hkexCmdbSync");
+        System.setProperty("LOG_PATH", "/data/logs/hkexCmdbSync");
+
+        Assertions.assertThat(String.join("\n", report(true))).doesNotContain("WARN log-dir mismatch");
+    }
+
+    /**
+     * 日志目录来自系统属性，测试之间必须清理，避免相互影响。
+     */
+    @AfterEach
+    void clearLogDirProperties() {
+        System.clearProperty("cwLogRootPath");
+        System.clearProperty("LOG_PATH");
     }
 
     /**
