@@ -42,6 +42,7 @@ public class ConfigValidator {
      */
     @PostConstruct
     public void validate() {
+        serviceNow.validateProxy();
         List<String> missing = new ArrayList<>();
 
         require(missing, "servicenow.base-url", serviceNow.getBaseUrl());

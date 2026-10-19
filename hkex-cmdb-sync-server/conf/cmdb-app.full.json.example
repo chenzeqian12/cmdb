@@ -31,6 +31,10 @@
   "servicenow": {
     "base-url": "",
     "token-path": "/oauth_token.do",
+    "proxy-enabled": false,
+    "proxy-host": "",
+    "proxy-port": 8080,
+    "allow-insecure-tls": false,
     "client-id": "",
     "client-secret": "",
     "username": "",

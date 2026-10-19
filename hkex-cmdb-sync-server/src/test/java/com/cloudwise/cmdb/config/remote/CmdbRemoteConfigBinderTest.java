@@ -178,6 +178,72 @@ class CmdbRemoteConfigBinderTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining(field);
     }
 
+    @Test
+    @DisplayName("旧 Nacos 配置不加代理字段时保持默认关闭")
+    void missingProxyFieldsKeepProxyDisabled() {
+        var properties = bind(validJson()).serviceNow();
+        Assertions.assertThat(properties.isProxyEnabled()).isFalse();
+        Assertions.assertThat(properties.getProxyHost()).isEmpty();
+        Assertions.assertThat(properties.getProxyPort()).isEqualTo(8080);
+    }
+
+    @Test
+    @DisplayName("Nacos 可选平铺代理字段绑定并保留为可读属性")
+    void proxyFieldsBindFromNacos() throws Exception {
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        ((ObjectNode) document.path("servicenow"))
+                .put("proxy-enabled", true).put("proxy-host", "webproxy.hkex").put("proxy-port", 8080);
+        var snapshot = bind(document.toString());
+        Assertions.assertThat(snapshot.serviceNow().isProxyEnabled()).isTrue();
+        Assertions.assertThat(snapshot.serviceNow().getProxyHost()).isEqualTo("webproxy.hkex");
+        Assertions.assertThat(snapshot.serviceNow().getProxyPort()).isEqualTo(8080);
+        Assertions.assertThat(snapshot.properties()).containsEntry("servicenow.proxy-host", "webproxy.hkex");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "\"proxy-enabled\":true",
+            "\"proxy-enabled\":true,\"proxy-host\":\"\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"http://webproxy.hkex:8080\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"user:PRIVATE_PROXY_SENTINEL@webproxy.hkex\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"webproxy.hkex/path\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"webproxy.hkex:8080\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"bad host\"",
+            "\"proxy-enabled\":true,\"proxy-host\":\"webproxy.hkex\",\"proxy-port\":0",
+            "\"proxy-enabled\":true,\"proxy-host\":\"webproxy.hkex\",\"proxy-port\":65536",
+            "\"proxy-enabled\":\"invalid\"", "\"proxy-enabled\":null", "\"proxy-enabled\":\"\"",
+            "\"proxy-port\":\"invalid\"", "\"proxy-port\":null", "\"proxy-port\":\"\"",
+            "\"proxy-host\":{}", "\"proxy-host\":[]", "\"proxy-host\":null",
+            "\"allow-insecure-tls\":\"true\"", "\"allow-insecure-tls\":null",
+            "\"allow-insecure-tls\":\"\"", "\"allow-insecure-tls\":1"
+    })
+    @DisplayName("发布前拒绝非法代理配置且不暴露输入值")
+    void invalidProxyFailsBeforeEncryption(String fields) throws Exception {
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        ((ObjectNode) document.path("servicenow")).setAll((ObjectNode) objectMapper.readTree("{" + fields + "}"));
+        Assertions.assertThatThrownBy(() -> binder.encryptedCredentials(document.toString()))
+                .isInstanceOf(IllegalStateException.class).hasNoCause()
+                .hasMessageNotContaining("PRIVATE_PROXY_SENTINEL");
+    }
+
+    @Test
+    void disabledProxyDoesNotRequireHost() throws Exception {
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        ((ObjectNode) document.path("servicenow")).put("proxy-enabled", false).put("proxy-host", "");
+        Assertions.assertThat(bind(document.toString()).serviceNow().isProxyEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("跳过证书校验开关可选且默认关闭")
+    void insecureTlsSwitchDefaultsOff() throws Exception {
+        Assertions.assertThat(bind(validJson()).serviceNow().isAllowInsecureTls()).isFalse();
+        ObjectNode document = (ObjectNode) objectMapper.readTree(validJson());
+        ((ObjectNode) document.path("servicenow")).put("allow-insecure-tls", true);
+        Assertions.assertThat(bind(document.toString()).serviceNow().isAllowInsecureTls()).isTrue();
+        Assertions.assertThat(bind(document.toString()).properties())
+                .containsEntry("servicenow.allow-insecure-tls", true);
+    }
+
     private CmdbRemoteConfigSnapshot bind(String document) {
         return binder.bind(document, "user", "password");
     }

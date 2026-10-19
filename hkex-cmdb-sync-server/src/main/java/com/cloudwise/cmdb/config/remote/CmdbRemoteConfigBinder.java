@@ -40,7 +40,8 @@ public class CmdbRemoteConfigBinder {
             "base-url", "token-path", "client-id", "client-secret",
             "username-encrypted", "password-encrypted",
             "group-query", "page-size", "connect-timeout", "read-timeout",
-            "token-refresh-ahead-seconds");
+            "token-refresh-ahead-seconds", "proxy-enabled", "proxy-host", "proxy-port",
+            "allow-insecure-tls");
 
     private static final Set<String> DOUC_FIELDS = Set.of(
             "base-url", "gateway-prefix", "api-prefix", "auth-mode", "app-key", "app-secret",
@@ -99,6 +100,7 @@ public class CmdbRemoteConfigBinder {
                 throw new IllegalStateException("application configuration is incomplete; use the full JSON template");
             }
             validateApplicationValues(flattened);
+            validateServiceNowOptionals(flattened);
             requiredText(flattened, "servicenow.username-encrypted");
             requiredText(flattened, "servicenow.password-encrypted");
             return flattened;
@@ -107,6 +109,28 @@ public class CmdbRemoteConfigBinder {
         } catch (Exception exception) {
             throw new IllegalStateException("failed to parse or validate CMDB configuration");
         }
+    }
+
+    private void validateServiceNowOptionals(Map<String, Object> properties) {
+        for (String field : List.of("proxy-enabled", "proxy-host", "proxy-port", "allow-insecure-tls")) {
+            String key = "servicenow." + field;
+            if (properties.containsKey(key)) {
+                Object value = properties.get(key);
+                boolean validType = switch (field) {
+                    case "proxy-host" -> value instanceof String;
+                    case "proxy-port" -> value instanceof Integer;
+                    // 布尔开关不接受字符串：写成 "true" 时按类型拒绝，避免现场以为关掉了其实开着。
+                    default -> value instanceof Boolean;
+                };
+                if (!validType) {
+                    throw new IllegalStateException("invalid ServiceNow field type: " + key);
+                }
+            }
+        }
+        Binder binder = new Binder(List.of(new MapConfigurationPropertySource(properties)));
+        ServiceNowProperties serviceNow = binder.bind("servicenow", Bindable.of(ServiceNowProperties.class))
+                .orElseThrow(() -> new IllegalStateException("servicenow configuration is empty"));
+        serviceNow.validateProxy();
     }
 
     private String requiredText(Map<String, Object> properties, String key) {

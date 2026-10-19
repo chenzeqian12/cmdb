@@ -451,4 +451,48 @@ class GroupSyncServiceImplTest {
 
         Assertions.assertThat(planOf(result, "GroupA_SUP").getExistingMemberCount()).isZero();
     }
+
+    @Test
+    @DisplayName("成员明细日志逐组列出成员标识，未匹配的标 UNMATCHED")
+    void describeGroupMembersListsKeysAndMarksUnmatched() {
+        GroupMemberPlan plan = new GroupMemberPlan();
+        plan.setGroupName("GroupA_SUP");
+        plan.setGroupId(7L);
+        plan.getSourceMembers().addAll(List.of("alice@example.com", "bob@example.com"));
+        plan.getResolvedMembers().add("alice@example.com");
+        plan.getUnmatchedMembers().add("bob@example.com");
+        plan.setExistingMemberCount(1);
+        plan.getToAdd().add(101L);
+        plan.setApplied(true);
+
+        Assertions.assertThat(GroupSyncServiceImpl.describeGroupMembers(plan, 100))
+                .contains("name=GroupA_SUP", "groupId=7", "source=2", "resolved=1", "unmatched=1")
+                .contains("existing=1", "toAdd=1", "toRemove=0", "applied=true")
+                .contains("alice@example.com", "bob@example.com (UNMATCHED)")
+                .doesNotContain("truncated");
+    }
+
+    @Test
+    @DisplayName("成员过多时按上限截断，并在行尾明确标记")
+    void describeGroupMembersMarksTruncation() {
+        GroupMemberPlan plan = new GroupMemberPlan();
+        plan.setGroupName("Big_SUP");
+        plan.getSourceMembers().addAll(List.of("a@example.com", "b@example.com", "c@example.com"));
+
+        Assertions.assertThat(GroupSyncServiceImpl.describeGroupMembers(plan, 1))
+                .contains("members=[a@example.com]", "truncated=true", "sourceTotal=3")
+                .doesNotContain("b@example.com");
+    }
+
+    @Test
+    @DisplayName("未写入的组在明细里带上跳过原因")
+    void describeGroupMembersIncludesSkipReason() {
+        GroupMemberPlan plan = new GroupMemberPlan();
+        plan.setGroupName("Dry_SUP");
+        plan.getSourceMembers().add("a@example.com");
+        plan.setSkippedReason("dryRun, nothing written");
+
+        Assertions.assertThat(GroupSyncServiceImpl.describeGroupMembers(plan, 100))
+                .contains("applied=false", "skipped=\"dryRun, nothing written\"");
+    }
 }

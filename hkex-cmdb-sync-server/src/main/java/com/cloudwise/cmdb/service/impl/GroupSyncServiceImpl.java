@@ -18,6 +18,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -47,6 +48,12 @@ public class GroupSyncServiceImpl implements GroupSyncService {
 
     /** 日志里逐行列出的「成员有变动的组」数量上限，只用于看影响面。 */
     private static final int CHANGED_GROUP_LOG_LIMIT = 10;
+
+    /** 单个组最多在日志里列出的成员标识数量，避免大组把日志撑爆。 */
+    private static final int MEMBER_LOG_LIMIT_PER_GROUP = 100;
+
+    /** 一次同步最多列出的成员标识总数，超出后不再逐组展开。 */
+    private static final int MEMBER_LOG_LIMIT_TOTAL = 2000;
 
     private final ServiceNowClient serviceNowClient;
 
@@ -354,7 +361,76 @@ public class GroupSyncServiceImpl implements GroupSyncService {
             doucClient.setGroupMembers(groupId, plan.getTargetUserIds());
             plan.setApplied(true);
         }
+        logGroupMemberPlans(result);
         logChangedGroups(result);
+    }
+
+    /**
+     * 按组输出成员明细。
+     *
+     * <p>现场排查「这个组为什么是空的」时，原来只能看到 {@code count=0}，
+     * 看不出到底是谁没匹配上。这里每组打一行：组名、各类计数，以及成员标识
+     * （优先邮箱，见 {@link SourceMember#displayKey()}），匹配不到 DOUC 用户的标 {@code UNMATCHED}。</p>
+     *
+     * <p>体量控制：单组最多 {@value #MEMBER_LOG_LIMIT_PER_GROUP} 个标识，
+     * 一次同步最多 {@value #MEMBER_LOG_LIMIT_TOTAL} 个；被截断时行尾标 {@code truncated=true}，
+     * 不会静默少打。</p>
+     */
+    private void logGroupMemberPlans(GroupSyncResult result) {
+        int logged = 0;
+        int loggedGroups = 0;
+        for (GroupMemberPlan plan : result.getMemberPlans()) {
+            int remaining = MEMBER_LOG_LIMIT_TOTAL - logged;
+            if (remaining <= 0) {
+                break;
+            }
+            String line = describeGroupMembers(plan, Math.min(MEMBER_LOG_LIMIT_PER_GROUP, remaining));
+            log.info(line);
+            int listed = countListedMembers(plan, Math.min(MEMBER_LOG_LIMIT_PER_GROUP, remaining));
+            logged += listed;
+            loggedGroups++;
+        }
+        int omittedGroups = result.getMemberPlans().size() - loggedGroups;
+        if (omittedGroups > 0) {
+            log.info("Further group member details omitted: {} group(s) not listed (total groups={},"
+                    + " limit={} member entries per sync)",
+                    omittedGroups, result.getMemberPlans().size(), MEMBER_LOG_LIMIT_TOTAL);
+        }
+    }
+
+    private int countListedMembers(GroupMemberPlan plan, int limit) {
+        return Math.min(limit, plan.getSourceMembers().size());
+    }
+
+    /**
+     * 生成单个组的成员明细日志行（不含时间与级别），抽成方法便于单元测试直接断言。
+     *
+     * @param plan   成员计划
+     * @param limit  本行最多列出的成员标识数量
+     * @return 日志行内容
+     */
+    static String describeGroupMembers(GroupMemberPlan plan, int limit) {
+        Set<String> unmatched = new HashSet<>(plan.getUnmatchedMembers());
+        List<String> entries = new ArrayList<>();
+        for (String key : plan.getSourceMembers()) {
+            if (entries.size() >= limit) {
+                break;
+            }
+            entries.add(unmatched.contains(key) ? key + " (UNMATCHED)" : key);
+        }
+        boolean truncated = entries.size() < plan.getSourceMembers().size();
+        return "Group members, name=" + plan.getGroupName()
+                + ", groupId=" + plan.getGroupId()
+                + ", source=" + plan.getSourceMembers().size()
+                + ", resolved=" + plan.getResolvedMembers().size()
+                + ", unmatched=" + plan.getUnmatchedMembers().size()
+                + ", existing=" + plan.getExistingMemberCount()
+                + ", toAdd=" + plan.getToAdd().size()
+                + ", toRemove=" + plan.getToRemove().size()
+                + ", applied=" + plan.isApplied()
+                + (plan.getSkippedReason() == null ? "" : ", skipped=\"" + plan.getSkippedReason() + "\"")
+                + ", members=[" + String.join(", ", entries) + "]"
+                + (truncated ? ", truncated=true, sourceTotal=" + plan.getSourceMembers().size() : "");
     }
 
     /**

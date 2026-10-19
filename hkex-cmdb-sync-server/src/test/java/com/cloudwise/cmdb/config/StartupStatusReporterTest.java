@@ -144,6 +144,31 @@ class StartupStatusReporterTest {
     }
 
     @Test
+    @DisplayName("自检明确区分 ServiceNow 专用代理启用或关闭")
+    void reportShowsServiceNowProxyRoute() {
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("servicenow.proxy enabled=false").doesNotContain("proxy-host=");
+        serviceNow.setProxyEnabled(true);
+        serviceNow.setProxyHost("webproxy.hkex");
+        serviceNow.setProxyPort(8080);
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("servicenow.proxy enabled=true host=webproxy.hkex port=8080");
+    }
+
+    @Test
+    @DisplayName("跳过证书校验时自检必须打出状态与告警")
+    void reportAnnouncesDisabledTlsVerification() {
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("servicenow.tls-verification=enabled")
+                .doesNotContain("allow-insecure-tls=true");
+        serviceNow.setAllowInsecureTls(true);
+        Assertions.assertThat(String.join("\n", report(true)))
+                .contains("servicenow.tls-verification=DISABLED (allow-insecure-tls=true)")
+                .contains("WARN servicenow.allow-insecure-tls=true")
+                .contains("can read the integration credentials and tokens");
+    }
+
+    @Test
     @DisplayName("任何情况下都不打印凭据值，只打印是否存在")
     void reportNeverPrintsCredentialValues() {
         serviceNow.setUsername("sn-user-should-not-appear");

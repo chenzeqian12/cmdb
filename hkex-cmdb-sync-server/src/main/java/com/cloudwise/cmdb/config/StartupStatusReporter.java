@@ -92,10 +92,10 @@ public class StartupStatusReporter {
      * @return 待输出的日志行，顺序即输出顺序
      */
     List<String> buildLines() {
-        boolean dryRun = douc.isDryRun();
-        boolean scheduledEnabled = booleanValue("hkex.sync.scheduled-enabled", true);
-        boolean onStartup = booleanValue("hkex.sync.on-startup", true);
-        long startupDelay = longValue("hkex.sync.startup-delay-seconds", 30);
+        final boolean dryRun = douc.isDryRun();
+        final boolean scheduledEnabled = booleanValue("hkex.sync.scheduled-enabled", true);
+        final boolean onStartup = booleanValue("hkex.sync.on-startup", true);
+        final long startupDelay = longValue("hkex.sync.startup-delay-seconds", 30);
 
         List<String> lines = new ArrayList<>();
         lines.add(TAG + " artifact=" + artifactName());
@@ -103,6 +103,12 @@ public class StartupStatusReporter {
                 + " config-source=" + configSource()
                 + " http-port=" + actualHttpPort());
         lines.add(TAG + " servicenow.base-url=" + orMissing(serviceNow.getBaseUrl()));
+        serviceNow.validateProxy();
+        lines.add(TAG + " servicenow.proxy enabled=" + serviceNow.isProxyEnabled()
+                + (serviceNow.isProxyEnabled()
+                        ? " host=" + serviceNow.getProxyHost() + " port=" + serviceNow.getProxyPort() : ""));
+        lines.add(TAG + " servicenow.tls-verification="
+                + (serviceNow.isAllowInsecureTls() ? "DISABLED (allow-insecure-tls=true)" : "enabled"));
         lines.add(TAG + " douc.base-url=" + orMissing(douc.getBaseUrl())
                 + " gateway-prefix=" + orMissing(douc.getGatewayPrefix())
                 + " auth-mode=" + orMissing(douc.getAuthMode())
@@ -141,6 +147,13 @@ public class StartupStatusReporter {
     private List<String> notices(
             boolean dryRun, boolean scheduledEnabled, boolean onStartup, long startupDelay) {
         List<String> notices = new ArrayList<>();
+        if (serviceNow.isAllowInsecureTls()) {
+            notices.add(TAG + " WARN servicenow.allow-insecure-tls=true: HTTPS certificate verification for"
+                    + " ServiceNow is DISABLED; anything able to answer for servicenow.base-url="
+                    + orMissing(serviceNow.getBaseUrl())
+                    + " can read the integration credentials and tokens."
+                    + " Import the issuing CA into the JDK truststore and turn this off");
+        }
         if (!dryRun) {
             notices.add(TAG + " WARN dry-run=false: every sync WRITES to douc.base-url="
                     + orMissing(douc.getBaseUrl())

@@ -35,6 +35,24 @@ class CmdbConfigPublisherTest {
     }
 
     @Test
+    void encryptionPreservesReadableProxyFields() throws Exception {
+        var mapper = new ObjectMapper();
+        var source = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(validDocument());
+        ((com.fasterxml.jackson.databind.node.ObjectNode) source.path("servicenow"))
+                .put("proxy-enabled", true).put("proxy-host", "webproxy.hkex").put("proxy-port", 8080);
+        DoucCryptoClient crypto = Mockito.mock(DoucCryptoClient.class);
+        mockRoundTrip(crypto);
+        Path output = directory.resolve("with-proxy.json");
+        CmdbConfigPublisher.process(source.toString(), output, crypto,
+                Mockito.mock(NacosCmdbConfigRepository.class), mapper);
+        var result = mapper.readTree(Files.readString(output));
+        Assertions.assertThat(result.at("/servicenow/proxy-enabled").asBoolean()).isTrue();
+        Assertions.assertThat(result.at("/servicenow/proxy-host").asText()).isEqualTo("webproxy.hkex");
+        Assertions.assertThat(result.at("/servicenow/proxy-port").asInt()).isEqualTo(8080);
+        Mockito.verify(crypto, Mockito.times(2)).encrypt(Mockito.anyString());
+    }
+
+    @Test
     void publishModeSendsDocumentWithOnlyCredentialsEncrypted() throws Exception {
         DoucCryptoClient crypto = Mockito.mock(DoucCryptoClient.class);
         NacosCmdbConfigRepository repository = Mockito.mock(NacosCmdbConfigRepository.class);
